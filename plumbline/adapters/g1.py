@@ -18,11 +18,11 @@ from dataclasses import dataclass, field
 
 from plumbline.adapters.base import Action, ActionSchema, BusTap, ClockHook, ProxyConfig
 
-# OM1-family shared wiring (single source of truth): G1 runs on the same OM1
-# runtime, so its provider conventions are identical — import rather than fork a
-# second (already UNVERIFIED) guess. This is intra-package reuse of stable
-# constants, not a cross-boundary refactor of om1.py (invariant 6).
-from plumbline.adapters.om1 import _OPENAI_COMPATIBLE, _PROVIDER_ENV, _as_str, _is_asr_endpoint
+# OM1-family shared wiring (single source of truth): G1 runs on the same OM1 Go
+# runtime, so the proxy-redirect mechanism (config-field overrides) is identical —
+# reuse it rather than fork a second guess (intra-package reuse, not a cross-boundary
+# refactor of om1.py; invariant 6).
+from plumbline.adapters.om1 import _as_str, _family_proxy_config, _is_asr_endpoint
 from plumbline.core.seam import Seam
 from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
 from plumbline.proxy.normalizers import contains_image
@@ -34,9 +34,13 @@ class G1ActionSchema:
     """Unitree G1 bipedal humanoid commands, typed for comparison (§9.3).
 
     walk(vx, vy, vyaw) velocity locomotion, turn(vyaw), named gestures ("wave"),
-    speech, and named whole-body poses ("bow") — replacing OM1's quadruped
-    move/skill/speak/express vocabulary. `Action.kind` carries the humanoid kinds,
-    which the frozen dataclass accepts unchanged.
+    speech, and named whole-body poses ("bow"). `Action.kind` carries the humanoid
+    kinds, which the frozen dataclass accepts unchanged.
+
+    UNVERIFIED (WS5): both this vocabulary AND this `{"commands": [...]}` wire shape
+    are placeholders for the cross-embodiment demo. The confirmed OM1-family output
+    format is LLM tool calls (see docs/om1-integration.md and OM1ActionSchema); G1's
+    real action set (plugins/actions/unitree/g1) must be pinned against a real build.
     """
 
     commands: tuple[str, ...] = ("walk", "turn", "gesture", "speak", "pose")
@@ -80,7 +84,10 @@ class G1Adapter:
     """
 
     proxy_base_url: str
-    providers: tuple[str, ...] = ("openai", "anthropic", "gemini", "deepseek", "xai", "ollama")
+    # Same JSON5 redirect mechanism as OM1 (cortex_llm.config.base_url); see
+    # docs/om1-integration.md. Confirmed for the OM1-family runtime.
+    config_base_url_paths: tuple[str, ...] = ("cortex_llm.config.base_url",)
+    append_v1: bool = True
     # UNVERIFIED (CLAUDE.md medium-leash / WS5): G1's Zenoh key expressions are
     # placeholders, NOT confirmed against a real G1 build. Grep the real G1 HAL for
     # its declare_publisher/subscriber keys. Constructor fields so a caller overrides.
@@ -89,17 +96,11 @@ class G1Adapter:
     zenoh_session: ZenohSession | None = field(default=None)
 
     def configure_proxy(self) -> ProxyConfig:
-        """Point each provider's base URL at the proxy (OM1-family wiring, §9.3)."""
-        base = self.proxy_base_url.rstrip("/")
-        env: dict[str, str] = {}
-        config_fields: dict[str, str] = {}
-        for provider in self.providers:
-            value = f"{base}/v1" if provider in _OPENAI_COMPATIBLE else base
-            for var in _PROVIDER_ENV.get(provider, ()):
-                env[var] = value
-            # UNVERIFIED: the G1 config-file layout may differ from OM1's config/*.json5.
-            config_fields[f"{provider}.base_url"] = value
-        return ProxyConfig(proxy_base_url=base, env=env, config_fields=config_fields)
+        """Redirect OM1's model calls at the proxy via config-field overrides
+        (OM1-family mechanism, §9.3)."""
+        return _family_proxy_config(
+            self.proxy_base_url, self.config_base_url_paths, append_v1=self.append_v1
+        )
 
     def bus_tap(self) -> BusTap | None:
         if self.zenoh_session is None:

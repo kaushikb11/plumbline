@@ -33,7 +33,6 @@ from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
 _PROXY = "http://localhost:8900"
 _VISION_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 _CORTEX_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-_ACTION_KEY = "om1/agent/actions/go2"
 _FRAME = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
 _THRESHOLD = 0.2
 
@@ -71,10 +70,11 @@ _CAPTION_B_INCOMPAT: Mapping[str, str] = {
         "nothing notable is happening in view; quiet environment without people present anywhere"
     ),
 }
-_ACTION: Mapping[str, JSONValue] = {
-    "human_ahead": {"commands": [{"type": "move", "x": 0.3, "y": 0.0, "yaw": 0.1}]},
-    "obstacle_left": {"commands": [{"type": "move", "x": 0.0, "y": 0.2, "yaw": -0.3}]},
-    "owner_waving": {"commands": [{"type": "skill", "name": "shake paw"}]},
+# The discrete Move label the Cortex LLM decides per scene (docs/om1-integration.md).
+_MOVE: Mapping[str, str] = {
+    "human_ahead": "move forwards",
+    "obstacle_left": "turn left",
+    "owner_waving": "stand still",
 }
 
 
@@ -109,8 +109,25 @@ def _cortex_request(caption: str) -> JSONValue:
     }
 
 
-def _cortex_response(plan: JSONValue) -> JSONValue:
-    return {"id": "cortex-1", "choices": [{"message": {"content": json.dumps(plan)}}]}
+def _cortex_response(action_label: str) -> JSONValue:
+    """A Cortex chat response with an OpenAI-style Move tool call."""
+    return {
+        "id": "cortex-1",
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "Move",
+                                "arguments": json.dumps({"action": action_label}),
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+    }
 
 
 def _event(
@@ -164,6 +181,7 @@ def _record_gazebo_episode(adapter: OM1Adapter, store: TraceStore) -> str:
         )
 
         cortex_req = Payload(inline=fused)
+        cortex_resp = Payload(inline=_cortex_response(_MOVE[scene]))
         recorder.record(
             _event(
                 episode_id,
@@ -171,19 +189,17 @@ def _record_gazebo_episode(adapter: OM1Adapter, store: TraceStore) -> str:
                 adapter.seam_of(cortex_req, _CORTEX_ENDPOINT),
                 tick,
                 cortex_req,
-                Payload(inline=_cortex_response(_ACTION[scene])),
+                cortex_resp,
             )
         )
 
-        action_req = Payload(inline=_ACTION[scene])
         recorder.record(
-            _event(
-                episode_id,
-                next(seq),
-                adapter.seam_of(action_req, _ACTION_KEY),
-                tick,
-                action_req,
-                Payload(inline={"executed": True}),
+            adapter.reconstruct_decide_to_act(
+                episode_id=episode_id,
+                seq=next(seq),
+                logical_tick=tick,
+                decision_response=cortex_resp,
+                wall_ts=float(tick),
             )
         )
     recorder.close_episode(episode_id)

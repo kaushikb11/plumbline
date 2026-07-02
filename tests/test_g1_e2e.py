@@ -90,8 +90,9 @@ def _action_sequence(events: Sequence[SeamEvent], adapter: Adapter) -> tuple[Act
 def test_adapter_contract_and_configuration() -> None:
     adapter: Adapter = G1Adapter(proxy_base_url=_PROXY)
     config = adapter.configure_proxy()
-    assert config.env["OPENAI_BASE_URL"] == f"{_PROXY}/v1"
-    assert config.env["OLLAMA_HOST"] == _PROXY
+    # OM1-family redirect is a config-field override, not env vars (docs/om1-integration.md).
+    assert config.config_fields["cortex_llm.config.base_url"] == f"{_PROXY}/v1"
+    assert config.env == {}
     assert adapter.clock_hook() is None
     assert adapter.bus_tap() is None
     assert adapter.seam_of(Payload(inline=_vision_request()), _ENDPOINT) is Seam.SENSOR_TO_CAPTION
