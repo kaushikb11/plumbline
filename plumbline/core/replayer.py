@@ -153,8 +153,9 @@ class Replayer:
                     served.append(replace(recorded_event, response=live_response))
                     if live_response != recorded_event.response:
                         changed_live, changed_recorded = live_response, recorded_event.response
-                    else:
-                        changed_live = changed_recorded = None
+                    # If unchanged, do NOT clear a change already detected earlier in
+                    # this tick: a later unchanged sibling (multi-camera / multi-caption)
+                    # must not mask an earlier divergence (CLAUDE.md invariant 5).
                     continue
 
                 # Seam served from trace. If an upstream output changed, validate
@@ -177,7 +178,9 @@ class Replayer:
                         # if one exists, else serve recorded; continue past.
                         downstream = overrides.get(seam)
                         if downstream is not None:
-                            new_response = downstream(recorded_event.request)
+                            # Re-execute on the live upstream output (the changed
+                            # input this seam actually sees), not the recorded request.
+                            new_response = downstream(changed_live)
                             served.append(replace(recorded_event, response=new_response))
                             if new_response != recorded_event.response:
                                 changed_live, changed_recorded = (

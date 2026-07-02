@@ -108,8 +108,14 @@ def test_counterfactual_go_live_reports_divergence_and_continues() -> None:
     )
     assert result.diverged is True  # reported, not swallowed
     assert result.divergence_seam is Seam.CAPTION_TO_FUSE
-    # It did NOT halt: it continued and served downstream seams from the trace.
-    assert any(event.seam is Seam.FUSE_TO_DECIDE for event in result.events)
+    # It did NOT halt: it continued and served downstream seams FROM THE TRACE
+    # (bounded GO_LIVE), not a fabricated response.
+    served_fuse = [e for e in result.events if e.seam is Seam.FUSE_TO_DECIDE]
+    recorded_fuse = [
+        e for e in store.load_episode("ep-golive").events if e.seam is Seam.FUSE_TO_DECIDE
+    ]
+    assert served_fuse and recorded_fuse
+    assert served_fuse[0].response == recorded_fuse[0].response
 
 
 def _caption_event(seq: int, caption: str) -> SeamEvent:
@@ -140,3 +146,42 @@ def test_counterfactual_preserves_multiple_events_per_tick() -> None:
     )
     captions = [event for event in result.events if event.seam is Seam.SENSOR_TO_CAPTION]
     assert len(captions) == 2
+
+
+def test_counterfactual_multi_event_change_not_masked_by_unchanged_sibling() -> None:
+    # Two captions in one tick, both live: the FIRST changes, the second is unchanged.
+    # The unchanged sibling must NOT erase the first's divergence (invariant 5) —
+    # this fails against the last-writer-wins bug.
+    fuse_request = Payload(inline={"fused": "x"})
+    events = [
+        _caption_event(0, "cam0"),
+        _caption_event(1, "cam1"),
+        SeamEvent(
+            episode_id="ep-multi",
+            seq=2,
+            seam=Seam.CAPTION_TO_FUSE,
+            logical_tick=0,
+            wall_ts=0.0,
+            request=fuse_request,
+            response=Payload(inline={"ok": True}),
+            model_id=None,
+            params={},
+            request_digest=canonicalize(fuse_request).digest,
+            latency_ms=0.0,
+        ),
+    ]
+    store, clock = _record(events, "ep-multi")
+
+    def override(request: Payload) -> Payload:
+        # change camera 0; leave camera 1 exactly as recorded
+        frame = request.inline["frame"] if isinstance(request.inline, dict) else None
+        return Payload({"caption": "CHANGED"}) if frame == 0 else Payload({"caption": "cam1"})
+
+    result = Replayer(store, clock, {Seam.CAPTION_TO_FUSE: ExactMatcher()}).counterfactual(
+        "ep-multi",
+        live_frontier={Seam.SENSOR_TO_CAPTION},
+        overrides={Seam.SENSOR_TO_CAPTION: override},
+        on_divergence=DivergencePolicy.HALT,
+    )
+    assert result.diverged is True
+    assert result.divergence_seam is Seam.CAPTION_TO_FUSE

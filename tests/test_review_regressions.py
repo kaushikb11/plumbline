@@ -59,6 +59,26 @@ def test_canonical_dumps_rejects_non_finite() -> None:
         canonical_dumps({"x": float("inf")})
 
 
+def test_numeric_matcher_catches_non_numeric_field_change() -> None:
+    # Same coordinates but a changed non-numeric field must NOT be a vacuous match.
+    matcher = NumericToleranceMatcher(rtol=1e-3, atol=1e-3)
+    assert not matcher.matches(
+        Payload({"x": 1.0, "action": "stop"}), Payload({"x": 1.0, "action": "go"})
+    ).is_match
+    assert matcher.matches(
+        Payload({"x": 1.0, "action": "stop"}), Payload({"x": 1.0, "action": "stop"})
+    ).is_match
+
+
+def test_matchers_report_mismatch_not_crash_on_non_finite() -> None:
+    # A non-finite value (e.g. from a counterfactual override) must yield a mismatch,
+    # never a ValueError that crashes replay (invariant 5: divergence is a result).
+    nan = Payload({"x": float("nan")})
+    ok = Payload({"x": 1.0})
+    assert not ExactMatcher().matches(nan, ok).is_match
+    assert not NumericToleranceMatcher(rtol=1e-3, atol=1e-3).matches(nan, ok).is_match
+
+
 # --- judge (fidelity) -------------------------------------------------------
 
 
@@ -72,6 +92,16 @@ def test_judge_parses_negated_diverge_as_equivalent() -> None:
         _parse_equivalent(_judge_reply("NOT EQUIVALENT — the robot turns the other way")) is False
     )
     assert _parse_equivalent(_judge_reply("EQUIVALENT, same plan")) is True
+
+
+def test_judge_handles_hedged_and_compound_verdicts() -> None:
+    # Proximity-negation: an adverb between 'not' and 'equivalent', or a negation
+    # bound to a different word, must not read as equivalent (the unsafe direction).
+    assert _parse_equivalent(_judge_reply("not fully equivalent")) is False
+    assert _parse_equivalent(_judge_reply("These are not entirely equivalent.")) is False
+    assert _parse_equivalent(_judge_reply("The plans are different, not identical.")) is False
+    assert _parse_equivalent(_judge_reply("not the same; they differ")) is False
+    assert _parse_equivalent(_judge_reply("they do not diverge; identical behavior")) is True
 
 
 # --- fusion_loss (fidelity) -------------------------------------------------

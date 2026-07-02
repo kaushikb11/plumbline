@@ -22,6 +22,8 @@ from plumbline.proxy.normalizers import contains_image
 from plumbline.transport.zenoh_tap import ZenohSession, ZenohTap
 
 # Providers whose OpenAI-compatible endpoints expect a `/v1` base-URL suffix.
+# UNVERIFIED (like the keys below): which providers OM1 treats as OpenAI-compatible
+# (and thus need `/v1`) is inferred, not confirmed against a real OM1 build.
 _OPENAI_COMPATIBLE = frozenset({"openai", "deepseek", "xai"})
 
 # UNVERIFIED (CLAUDE.md medium-leash / WS5): these base-URL env-var names are

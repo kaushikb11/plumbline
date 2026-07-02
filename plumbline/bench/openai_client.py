@@ -98,6 +98,8 @@ def _message_content(response_json: Any) -> str:
         content = response_json["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise MalformedResponse(f"unexpected response shape: {response_json!r}") from exc
+    if content is None:  # e.g. a tool-call-only reply has null content
+        raise MalformedResponse("response has no text content (tool-call-only?)")
     return str(content)
 
 

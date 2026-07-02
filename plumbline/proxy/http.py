@@ -149,6 +149,11 @@ class AsyncHTTPProxy:
                     return _response_from_payload(event.response, _status_of(event))
             raise KeyError(f"no recorded response for request {normalized.digest_key}")
 
+        # NOTE (bounded): this counterfactual path matches against the FIRST recorded
+        # event at the seam — it has no positional cursor, so for a seam that recurs
+        # across ticks use `Replayer.counterfactual` / `ReplayingProxy` (which advance
+        # a per-seam cursor and can go live). The deployed replay server uses only the
+        # faithful path above; this branch is for in-process/counterfactual callers.
         matchers = matchers or {}
         for event in episode.events:
             if event.seam is not normalized.seam:
@@ -184,7 +189,12 @@ class AsyncHTTPProxy:
 def _decode_json(body: bytes) -> JSONValue:
     """Best-effort JSON decode. A non-JSON body (an HTML/text error page, binary)
     is preserved as raw text rather than crashing record() after the upstream
-    response has already been consumed."""
+    response has already been consumed.
+
+    Fidelity note: a non-JSON body is NOT byte-faithful on replay — it is wrapped as
+    `{"plumbline.raw_body": <text>}` and re-emitted as JSON. The determinism envelope
+    is model-I/O JSON (invariant 4); a runtime that branches on a recorded error
+    page's raw bytes would see different bytes on replay."""
     if not body:
         return {}
     try:

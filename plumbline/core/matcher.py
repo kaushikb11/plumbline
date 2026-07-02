@@ -50,7 +50,10 @@ class ExactMatcher:
     """
 
     def matches(self, live: Payload, recorded: Payload) -> MatchVerdict:
-        if canonicalize(live).digest == canonicalize(recorded).digest:
+        verdict = _canonical_equal(live, recorded)
+        if verdict is None:  # non-finite (NaN/Inf) can't be canonicalized
+            return MatchVerdict(is_match=False, distance=1.0, reason="non-canonicalizable payload")
+        if verdict:
             return MatchVerdict(is_match=True, distance=0.0, reason="exact canonical match")
         return MatchVerdict(is_match=False, distance=1.0, reason="structural mismatch")
 
@@ -95,10 +98,15 @@ class NumericToleranceMatcher:
         if not keys:
             # No comparable numeric fields anywhere: this matcher can't measure a
             # tolerance, so fall back to exact equality rather than a vacuous match.
-            equal = canonicalize(live).digest == canonicalize(recorded).digest
+            equal = _canonical_equal(live, recorded)
+            if equal is None:
+                return MatchVerdict(False, 1.0, "non-canonicalizable payload")
             return MatchVerdict(equal, 0.0 if equal else 1.0, "no numeric fields; exact compare")
         max_diff = 0.0
-        structural = False  # a field present on only one side
+        # Non-numeric structure (labels, keys, added/removed non-numeric fields) must
+        # match exactly; only the numeric fields get tolerance. Otherwise a changed
+        # `{"action": "stop"->"go"}` beside matching coordinates is a vacuous match.
+        structural = _non_numeric_fields(live) != _non_numeric_fields(recorded)
         numeric_mismatch = False
         for key in keys:
             if key not in live_nums or key not in recorded_nums:
@@ -113,7 +121,7 @@ class NumericToleranceMatcher:
         # so the gate never reads a missing field as a near-identical match.
         distance = max(max_diff, 1.0) if structural else max_diff
         reason = (
-            "structural mismatch: numeric field present on only one side"
+            "structural mismatch: non-numeric fields or field set differ"
             if structural
             else f"max abs field difference {max_diff:.6g}"
         )
@@ -199,6 +207,39 @@ def _numeric_fields(payload: Payload) -> dict[str, float]:
         elif isinstance(value, list):
             for index, item in enumerate(value):
                 walk(f"{prefix}[{index}]", item)
+
+    walk("", payload.inline)
+    return result
+
+
+def _canonical_equal(live: Payload, recorded: Payload) -> bool | None:
+    """Whether two payloads have equal canonical digests. Returns None if either
+    cannot be canonicalized (a non-finite float), so callers report a mismatch
+    rather than letting the ValueError crash replay (invariant 5)."""
+    try:
+        return canonicalize(live).digest == canonicalize(recorded).digest
+    except ValueError:
+        return None
+
+
+def _non_numeric_fields(payload: Payload) -> dict[str, str]:
+    """Every NON-numeric leaf (str/bool/null) keyed by path, tagged by type, so the
+    structural skeleton is compared exactly (numeric leaves get tolerance instead)."""
+    result: dict[str, str] = {}
+
+    def walk(prefix: str, value: JSONValue) -> None:
+        if isinstance(value, bool):
+            result[prefix] = f"bool:{value}"
+        elif isinstance(value, (int, float)):
+            return  # numeric: compared with tolerance elsewhere
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                walk(f"{prefix}.{key}" if prefix else key, item)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(f"{prefix}[{index}]", item)
+        else:  # str or None
+            result[prefix] = f"{type(value).__name__}:{value}"
 
     walk("", payload.inline)
     return result

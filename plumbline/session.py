@@ -125,10 +125,12 @@ class RecordingSession(Recorder):
 
     def record(self, event: SeamEvent) -> None:
         with self._lock:
-            if not self._opened or self._closed:
+            if self._closed:
                 # A bus sample in flight after close() (the tap fires on a Zenoh
-                # thread): drop it rather than crash the tap thread on a closed
-                # episode. The episode is sealed; the late action is not recorded.
+                # thread): drop it rather than crash the tap thread on a sealed
+                # episode. The late action is intentionally not recorded. A record
+                # BEFORE open() is a caller-ordering bug and is left to surface, not
+                # silently dropped (which would hide a lost first action).
                 return
             super().record(replace(event, seq=next(self._seq)))
 

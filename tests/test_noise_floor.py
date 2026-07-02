@@ -46,16 +46,15 @@ def test_sigma_converges_to_analytic_self_divergence() -> None:
 
     decision_stability = cast(
         _DecisionStabilityFn,
-        load_unimplemented("plumbline.fidelity", "decision_stability"),  # AttributeError now
+        load_unimplemented("plumbline.fidelity", "decision_stability"),
     )
 
     sigmas = [decision_stability(decider.decide, context, n) for n in _SAMPLE_SIZES]
 
-    # Monotone non-increasing: more samples, tighter floor. (Pair consecutive
-    # sigmas; both slices have the same length so strict zip is well-formed.)
-    assert all(later <= earlier for earlier, later in zip(sigmas[:-1], sigmas[1:], strict=True))
-    # Converging toward the analytic limit of 0 (self-divergence of one distribution).
-    assert sigmas[-1] < sigmas[0]
+    # More samples -> tighter floor. Assert the TREND robustly (the largest-N floor is
+    # well below the smallest-N floor) rather than strict pairwise monotonicity, which
+    # is not guaranteed for a finite random estimator and would be seed-fragile.
+    assert sigmas[-1] < 0.5 * sigmas[0]
     # Sampling noise scales as 1/sqrt(N): the floor shrinks by ~sqrt(64x) = 8x.
     expected_ratio = math.sqrt(_SAMPLE_SIZES[-1] / _SAMPLE_SIZES[0])
     assert sigmas[0] / sigmas[-1] == pytest.approx(expected_ratio, rel=0.5)

@@ -38,7 +38,9 @@ def build_scenes(image_dir: str | Path, labels: Mapping[str, str]) -> tuple[Labe
         path = directory / filename
         if not path.is_file():
             raise FileNotFoundError(f"image not found: {path}")
-        scenes.append(LabeledScene(scene_id=path.stem, image=encode_image(path), render_g=render_g))
+        scenes.append(
+            LabeledScene(scene_id=path.stem, image=encode_image(path), render_g=str(render_g))
+        )
     return tuple(scenes)
 
 

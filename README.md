@@ -47,7 +47,7 @@ Plumbline is built in vertical slices. What is implemented and tested today:
 | **WS4 Observability** (`observability/`) — baseline-comparison monitors (Experiment B), trace-diff viewer | ✅ monitors + trace-diff implemented & tested; Grafana dashboards not yet |
 | **CLI** (spec §11) | ✅ `record`, `replay`, `gate`, `diff`, `scenes` subcommands (record/replay run the proxy server; need uvicorn) |
 
-The whole test suite (92 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
+The whole test suite (100 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
 
 ## Results
 
