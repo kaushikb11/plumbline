@@ -1,0 +1,20 @@
+# Pre-commit hooks for Plumbline.
+# Runs ruff (lint + format) and mypy --strict on every commit.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        name: mypy --strict
+        args: [--strict]
+        # Type-check the whole package, not just changed files, so the
+        # strict contract holds across the frozen core interfaces.
+        pass_filenames: false
+        additional_dependencies: []

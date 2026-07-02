@@ -1,0 +1,36 @@
+# CI for robot behavior (engineering spec §8.4).
+#
+# Runs the Plumbline regression gate on a pull request: counterfactual-replays the
+# golden episodes under the candidate config and fails the check if behavior drifts
+# past the threshold — drift that latency dashboards and text-level tracers miss.
+#
+# Point `GATE_CONFIG` at your own gate config (a Python file exposing
+# `build() -> GateSpec` that loads your golden traces and the candidate config).
+# The default runs the bundled example, which passes (a compatible captioner swap).
+name: Robot behavior gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GATE_CONFIG: plumbline/bench/example_gate.py
+
+jobs:
+  gate:
+    name: Regression gate over golden episodes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run the robot-behavior gate
+        run: plumbline gate "$GATE_CONFIG"
