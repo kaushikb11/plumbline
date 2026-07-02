@@ -1,5 +1,6 @@
 """Runtime adapters (engineering spec §9). OM1 is the flagship reference."""
 
+from plumbline.adapters.action_matcher import ActionSchemaMatcher
 from plumbline.adapters.base import (
     Action,
     ActionSchema,
@@ -9,16 +10,20 @@ from plumbline.adapters.base import (
     ClockHook,
     ProxyConfig,
 )
+from plumbline.adapters.g1 import G1ActionSchema, G1Adapter
 from plumbline.adapters.generic import GenericActionSchema, GenericAgentAdapter
 from plumbline.adapters.om1 import OM1ActionSchema, OM1Adapter
 
 __all__ = [
     "Action",
     "ActionSchema",
+    "ActionSchemaMatcher",
     "Adapter",
     "BusSample",
     "BusTap",
     "ClockHook",
+    "G1ActionSchema",
+    "G1Adapter",
     "GenericActionSchema",
     "GenericAgentAdapter",
     "OM1ActionSchema",

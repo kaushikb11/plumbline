@@ -179,3 +179,28 @@ def test_failure_policies() -> None:
         assert gate(store, golden, config, 0.1, policy=policy).passed is False
     # ...and a threshold above the drift passes.
     assert gate(store, golden, config, 1.0, policy=FailurePolicy.ANY).passed is True
+
+
+def test_gate_action_schema_matcher_tolerates_numeric_jitter() -> None:
+    # The ActionSchema-derived behavior matcher (§14.6) lets a coordinate jitter a
+    # real controller produces run-to-run pass the gate, where ExactMatcher fails.
+    from plumbline.adapters import ActionSchemaMatcher, OM1ActionSchema
+    from plumbline.regression.golden import BehaviorLabel
+
+    store = _record_golden_episode()
+    golden = GoldenSet(store)
+    # Golden label = the recorded plans nudged within tolerance.
+    golden.add(
+        "golden-1",
+        label=BehaviorLabel(
+            actions=(
+                Payload(inline={"commands": [{"type": "move", "x": 0.301, "y": 0.0, "yaw": 0.1}]}),
+                Payload(inline={"commands": [{"type": "move", "x": 0.0, "y": 0.201, "yaw": -0.3}]}),
+            )
+        ),
+    )
+    config = Config(live_frontier=set(), overrides={}, matchers={})
+
+    assert gate(store, golden, config, 0.1).passed is False  # ExactMatcher default -> drift
+    tolerant = ActionSchemaMatcher(OM1ActionSchema(), atol=1e-2)
+    assert gate(store, golden, config, 0.1, behavior_matcher=tolerant).passed is True

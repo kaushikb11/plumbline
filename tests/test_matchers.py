@@ -65,3 +65,83 @@ def test_numeric_tolerance_matcher_on_pose_payloads() -> None:
 
     assert matcher.matches(base, within_tolerance).is_match is True  # <-- NotImplementedError now
     assert matcher.matches(base, outside_tolerance).is_match is False
+
+
+# --- ActionSchemaMatcher (§9.1, §14.6) --------------------------------------
+
+from plumbline.adapters import (  # noqa: E402
+    ActionSchemaMatcher,
+    GenericActionSchema,
+    OM1ActionSchema,
+)
+from plumbline.core.matcher import ExactMatcher as _Exact  # noqa: E402
+
+
+def _om1_move(x: float) -> Payload:
+    return Payload(inline={"commands": [{"type": "move", "x": x, "y": 0.0, "yaw": 0.1}]})
+
+
+def test_action_schema_matcher_pose_within_tolerance_matches() -> None:
+    matcher = ActionSchemaMatcher(OM1ActionSchema(), atol=1e-2)
+    live, recorded = _om1_move(0.301), _om1_move(0.30)
+    assert matcher.matches(live, recorded).is_match  # within tolerance
+    assert matcher.matches(live, recorded).distance == 0.0
+    assert not _Exact().matches(live, recorded).is_match  # ...where ExactMatcher fails
+
+
+def test_action_schema_matcher_pose_outside_tolerance_fails() -> None:
+    matcher = ActionSchemaMatcher(OM1ActionSchema(), atol=1e-2)
+    verdict = matcher.matches(_om1_move(0.50), _om1_move(0.30))
+    assert not verdict.is_match
+    assert verdict.distance == 1.0  # single action, one mismatch
+
+
+def test_action_schema_matcher_changed_name_or_kind_fails() -> None:
+    matcher = ActionSchemaMatcher(OM1ActionSchema())
+    skill_a = Payload(inline={"commands": [{"type": "skill", "name": "shake paw"}]})
+    skill_b = Payload(inline={"commands": [{"type": "skill", "name": "sit"}]})
+    assert not matcher.matches(skill_a, skill_b).is_match  # changed name
+    assert not matcher.matches(_om1_move(0.3), skill_a).is_match  # changed kind
+
+
+def test_action_schema_matcher_dropped_action_is_half() -> None:
+    matcher = ActionSchemaMatcher(OM1ActionSchema())
+    two = Payload(
+        inline={"commands": [{"type": "move", "x": 0.3}, {"type": "speak", "text": "hi"}]}
+    )
+    one = Payload(inline={"commands": [{"type": "move", "x": 0.3}]})
+    verdict = matcher.matches(one, two)
+    assert not verdict.is_match
+    assert verdict.distance == 0.5  # length gap 1 over max length 2
+
+
+def test_action_schema_matcher_non_numeric_arg_differs_fails() -> None:
+    matcher = ActionSchemaMatcher(OM1ActionSchema())
+    hi = Payload(inline={"commands": [{"type": "speak", "text": "hello"}]})
+    bye = Payload(inline={"commands": [{"type": "speak", "text": "world"}]})
+    assert not matcher.matches(hi, bye).is_match
+
+
+def test_action_schema_matcher_both_unparseable_match() -> None:
+    # §14.6 open default: two payloads that parse to no actions read as equivalent
+    # (consistent with structural_equivalence's both-empty convention).
+    matcher = ActionSchemaMatcher(OM1ActionSchema())
+    verdict = matcher.matches(Payload(inline={"nope": 1}), Payload(inline={"other": 2}))
+    assert verdict.is_match
+    assert verdict.distance == 0.0
+
+
+def test_action_schema_matcher_is_schema_agnostic() -> None:
+    # Same matcher over the generic tool-call schema, args within tolerance.
+    matcher = ActionSchemaMatcher(GenericActionSchema(), atol=1e-2)
+    a = Payload(
+        inline={
+            "tool_calls": [{"function": {"name": "move_forward", "arguments": '{"speed": 0.30}'}}]
+        }
+    )
+    b = Payload(
+        inline={
+            "tool_calls": [{"function": {"name": "move_forward", "arguments": '{"speed": 0.301}'}}]
+        }
+    )
+    assert matcher.matches(a, b).is_match
