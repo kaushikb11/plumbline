@@ -9,6 +9,7 @@ from plumbline.adapters.base import (
     ClockHook,
     ProxyConfig,
 )
+from plumbline.adapters.generic import GenericActionSchema, GenericAgentAdapter
 from plumbline.adapters.om1 import OM1ActionSchema, OM1Adapter
 
 __all__ = [
@@ -18,6 +19,8 @@ __all__ = [
     "BusSample",
     "BusTap",
     "ClockHook",
+    "GenericActionSchema",
+    "GenericAgentAdapter",
     "OM1ActionSchema",
     "OM1Adapter",
     "ProxyConfig",
