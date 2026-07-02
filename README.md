@@ -6,7 +6,7 @@
 
 ---
 
-Robot runtimes like OpenMind's [OM1](https://github.com/OpenmindAGI/OM1) turn multimodal sensor streams into natural-language captions, fuse them into a single prompt at roughly 1 Hz, and hand that prompt to a Cortex LLM that decides what to do. Every model in that loop — the VLM captioner, the ASR, the Cortex LLM — is a nondeterministic external dependency, usually a cloud API sampling at non-zero temperature. The consequence: you cannot reproduce a run, cannot regression-test a model or prompt change, and cannot measure how much task-relevant information survives the language bottleneck.
+Robot runtimes like OpenMind's [OM1](https://github.com/OpenMind/OM1) turn multimodal sensor streams into natural-language captions, fuse them into a single prompt at roughly 1 Hz, and hand that prompt to a Cortex LLM that decides what to do. Every model in that loop — the VLM captioner, the ASR, the Cortex LLM — is a nondeterministic external dependency, usually a cloud API sampling at non-zero temperature. The consequence: you cannot reproduce a run, cannot regression-test a model or prompt change, and cannot measure how much task-relevant information survives the language bottleneck.
 
 Plumbline is a standalone, runtime-agnostic library that fixes all three:
 
@@ -39,14 +39,23 @@ Plumbline is built in vertical slices. What is implemented and tested today:
 | Workstream | State |
 |---|---|
 | **WS1 Substrate** (`core/`) — seams, trace, virtual clock, recorder, replayer (faithful + counterfactual), matchers | ✅ implemented, `mypy --strict`, property-tested |
-| **WS2 Trace + proxy** (`proxy/`) — recording/replaying proxy, OpenAI/Gemini/Anthropic normalizers, OTel-GenAI schema, content-addressed store, SSE capture | ✅ implemented & tested. The proxy uses an **injected** async transport; a concrete TLS-terminating HTTP server is not yet shipped |
+| **WS2 Trace + proxy** (`proxy/`) — recording/replaying proxy, OpenAI/Gemini/Anthropic normalizers, OTel-GenAI schema, content-addressed store, SSE capture, ASGI proxy server | ✅ implemented & tested. The proxy uses an **injected** async transport, with a bundled ASGI server (uvicorn-runnable); TLS termination is left to a front proxy |
 | **WS3 Fidelity** (`fidelity/`) — decision distributions, the noise floor, caption/fusion loss, behavioral-equivalence judge | ✅ implemented & tested. The §14.5/§14.6 judgment calls (`render(G)`, `salient`) are **flagged for human review** |
+| **Bench** (`bench/`) — captioner-for-decisions leaderboard (Experiment C), OpenAI-compatible client, scene authoring | ✅ implemented & tested; **demonstrated on real models** — see [Results](#results) |
 | **WS5 OM1 adapter** (`adapters/`, `transport/`) — proxy config, Zenoh tap, seam classification, action schema, counterfactual captioner swap | ✅ implemented & tested against a *synthetic* OM1 Go2 episode. A real Gazebo recording and sim ground-truth extraction are not yet done |
 | **WS4 Gate** (`regression/`) — golden episodes, drift gate, `plumbline gate` CLI, GitHub Action | ✅ implemented & tested: the gate fails on an injected regression and passes on an unchanged config |
-| **WS4 Observability** (`observability/`) — Grafana panels, trace-diff viewer | ⛔ not started |
-| **CLI** (`plumbline gate`, spec §11) | ✅ the `gate` subcommand; `record/replay/fidelity/diff` are planned |
+| **WS4 Observability** (`observability/`) — baseline-comparison monitors (Experiment B), trace-diff viewer | ✅ monitors + trace-diff implemented & tested; Grafana dashboards not yet |
+| **CLI** (spec §11) | ✅ `gate`, `diff`, `scenes` subcommands; `record`/`replay` planned |
 
-The whole test suite is green under `mypy --strict`. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
+The whole test suite (92 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
+
+## Results
+
+Plumbline's fidelity metric, run **end-to-end on real models** (a real VLM + a real LLM via [Ollama](https://ollama.com), no robot, no simulator): two perception front-ends of the *same* vision model, ranked by downstream **decision** fidelity.
+
+> A **narrow field of view** that can't see the floor drops the obstacle from its caption — and Plumbline charges it **2–3× higher `caption_loss` on exactly the obstacle scenes**, where the missing object flips the robot's decision from *stop* to *move*. The wide field of view wins (decision fidelity **0.814 vs 0.752**). A latency dashboard or text-quality tracer sees nothing wrong; Plumbline sees the decision break.
+
+Full numbers, honest noise caveats, and the reproducible script are in **[docs/results-experiment-c.md](docs/results-experiment-c.md)** (`python examples/experiment_c.py`).
 
 ## Install
 
@@ -110,9 +119,17 @@ from plumbline.fidelity import caption_loss, fusion_loss, decision_stability
 loss = caption_loss(decider, caption, oracle_context=render_G, n=64)
 ```
 
-### 5. Gate — roadmap (WS4)
+### 5. Gate, diff, author scenes
 
-The regression gate (counterfactual-replay golden episodes under a candidate config, fail CI on behavior drift) is the next workstream and is **not yet implemented**. Its intended shape is in engineering spec §8.
+The regression gate counterfactual-replays each golden episode under a candidate config (a swapped model / edited prompt, expressed as seam overrides), computes behavioral drift from the accepted action sequence, and fails per policy — so CI catches a silent behavior regression a latency dashboard cannot (engineering spec §8):
+
+```bash
+plumbline gate path/to/gate_config.py                 # exits non-zero on drift; wrap in CI
+plumbline diff EPISODE_A EPISODE_B --store ./traces   # where two runs diverged, and which seam
+plumbline scenes ./images labels.json -o scenes.json  # author Experiment-C leaderboard input
+```
+
+A ready-to-run gate config lives in [`plumbline/bench/example_gate.py`](plumbline/bench/example_gate.py), and the shipped GitHub Action wraps `plumbline gate` for CI.
 
 ## Determinism envelope (read this)
 
@@ -156,15 +173,16 @@ Citations follow engineering spec §12. Only the VLA-FEB verdict was independent
 ```
 plumbline/
   core/          # FROZEN interfaces: seam, trace, clock, recorder, replayer, matcher, store
-  proxy/         # recording/replaying proxy, provider normalizers, OTel schema, SSE
-  transport/     # zenoh tap
+  proxy/         # recording/replaying proxy, normalizers, OTel schema, SSE, ASGI server
+  transport/     # zenoh tap + shim
   fidelity/      # decision distributions, noise floor, caption/fusion loss, judge
-  regression/    # gate, drift, golden episodes        (WS4, not started)
-  adapters/      # adapter contract, OM1 adapter
-  bench/         # golden-episode dataset               (not started)
-  observability/ # grafana, trace-diff backend          (WS4, not started)
-  cli.py         # (stub)
-tests/           # determinism, divergence, re-execution, matchers, proxy, fidelity, judge, om1 e2e + counterfactual
+  regression/    # gate, drift, golden episodes
+  adapters/      # adapter contract, OM1 adapter, recording-session coordinator
+  bench/         # captioner leaderboard, OpenAI-compatible client, scene authoring
+  observability/ # baseline-comparison monitors, trace-diff viewer   (Grafana: not yet)
+  cli.py         # gate / diff / scenes subcommands
+examples/        # runnable Experiment-C demo (real models via Ollama)
+tests/           # determinism, divergence, re-execution, matchers, proxy, fidelity, judge, gate, om1, cli, ...
 spec/            # the two specs — source of truth
 ```
 
