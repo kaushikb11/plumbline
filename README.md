@@ -57,7 +57,7 @@ Plumbline's fidelity metric, run **end-to-end on real models** (a real VLM + a r
 
 Full numbers, honest noise caveats, and the reproducible script are in **[docs/results-experiment-c.md](docs/results-experiment-c.md)** (`python examples/experiment_c.py`).
 
-**Experiment A** (`python examples/experiment_a.py`) makes the same point *within* one caption: as it is progressively degraded, decision fidelity falls off a cliff while a surface text-similarity metric (`token_dice`) declines smoothly and stays high — the two metrics diverge, and only the decision-scored one sees the break.
+**Experiment A** (`python examples/experiment_a.py`) makes the same point *within* one caption: a surface text-similarity metric (`token_dice`) is **blind to which word carries the decision** — two captions degraded to *identical* surface similarity can have *opposite* decision fidelity. (The size of the gap depends on caption structure and the degradation knob, so it's a demonstration of the blindness, not a universal constant — see [`docs`/the module docstring](plumbline/bench/verbosity.py).)
 
 ## Install
 
