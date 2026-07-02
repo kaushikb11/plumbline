@@ -41,13 +41,13 @@ Plumbline is built in vertical slices. What is implemented and tested today:
 | **WS1 Substrate** (`core/`) — seams, trace, virtual clock, recorder, replayer (faithful + counterfactual), matchers | ✅ implemented, `mypy --strict`, property-tested |
 | **WS2 Trace + proxy** (`proxy/`) — recording/replaying proxy, OpenAI/Gemini/Anthropic normalizers, OTel-GenAI schema, content-addressed store, SSE capture, ASGI proxy server | ✅ implemented & tested. The proxy uses an **injected** async transport, with a bundled ASGI server (uvicorn-runnable); TLS termination is left to a front proxy |
 | **WS3 Fidelity** (`fidelity/`) — decision distributions, the noise floor, caption/fusion loss, behavioral-equivalence judge | ✅ implemented & tested. The §14.5/§14.6 judgment calls (`render(G)`, `salient`) are **flagged for human review** |
-| **Bench** (`bench/`) — captioner-for-decisions leaderboard (Experiment C), OpenAI-compatible client, scene authoring | ✅ implemented & tested; **demonstrated on real models** — see [Results](#results) |
-| **WS5 OM1 adapter** (`adapters/`, `transport/`) — proxy config, Zenoh tap, seam classification, action schema, counterfactual captioner swap | ✅ implemented & tested against a *synthetic* OM1 Go2 episode. A real Gazebo recording and sim ground-truth extraction are not yet done |
+| **Bench** (`bench/`) — captioner-for-decisions leaderboard (Experiment C), caption verbosity/fidelity curve (Experiment A), OpenAI-compatible client, scene authoring | ✅ implemented & tested; **demonstrated on real models** — see [Results](#results) |
+| **WS5 adapters** (`adapters/`, `transport/`) — OM1 (proxy config, Zenoh tap, seam classification, counterfactual swap) **plus a generic OpenAI-agent-loop adapter** proving the frozen contract is runtime-agnostic (bus-less, derived action seam) | ✅ implemented & tested against *synthetic* episodes. A real Gazebo recording and sim ground-truth extraction are not yet done |
 | **WS4 Gate** (`regression/`) — golden episodes, drift gate, `plumbline gate` CLI, GitHub Action | ✅ implemented & tested: the gate fails on an injected regression and passes on an unchanged config |
 | **WS4 Observability** (`observability/`) — baseline-comparison monitors (Experiment B), trace-diff viewer | ✅ monitors + trace-diff implemented & tested; Grafana dashboards not yet |
 | **CLI** (spec §11) | ✅ `record`, `replay`, `gate`, `diff`, `scenes` subcommands (record/replay run the proxy server; need uvicorn) |
 
-The whole test suite (100 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
+The whole test suite (117 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
 
 ## Results
 
@@ -56,6 +56,8 @@ Plumbline's fidelity metric, run **end-to-end on real models** (a real VLM + a r
 > A **narrow field of view** that can't see the floor drops the obstacle from its caption — and Plumbline charges it **2–3× higher `caption_loss` on exactly the obstacle scenes**, where the missing object flips the robot's decision from *stop* to *move*. The wide field of view wins (decision fidelity **0.814 vs 0.752**). A latency dashboard or text-quality tracer sees nothing wrong; Plumbline sees the decision break.
 
 Full numbers, honest noise caveats, and the reproducible script are in **[docs/results-experiment-c.md](docs/results-experiment-c.md)** (`python examples/experiment_c.py`).
+
+**Experiment A** (`python examples/experiment_a.py`) makes the same point *within* one caption: as it is progressively degraded, decision fidelity falls off a cliff while a surface text-similarity metric (`token_dice`) declines smoothly and stays high — the two metrics diverge, and only the decision-scored one sees the break.
 
 ## Install
 
