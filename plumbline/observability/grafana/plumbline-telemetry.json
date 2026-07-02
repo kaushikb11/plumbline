@@ -1,0 +1,100 @@
+{
+  "title": "Plumbline — Trace Telemetry",
+  "uid": "plumbline-telemetry",
+  "schemaVersion": 39,
+  "editable": true,
+  "tags": ["plumbline"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Infinity datasource",
+        "type": "datasource",
+        "query": "yesoreyeram-infinity-datasource",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Per-seam mean latency (ms)",
+      "type": "barchart",
+      "datasource": "${datasource}",
+      "description": "Mean SeamEvent.latency_ms per seam (recorded, not scheduler wall-clock).",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "root_selector": "seams",
+          "columns": [
+            {"selector": "seam", "text": "seam", "type": "string"},
+            {"selector": "latency_mean_ms", "text": "mean ms", "type": "number"},
+            {"selector": "count", "text": "calls", "type": "number"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Per-seam p95 latency (ms)",
+      "type": "bargauge",
+      "datasource": "${datasource}",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "root_selector": "seams",
+          "columns": [
+            {"selector": "seam", "text": "seam", "type": "string"},
+            {"selector": "latency_p95_ms", "text": "p95 ms", "type": "number"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Token usage per seam",
+      "type": "barchart",
+      "datasource": "${datasource}",
+      "description": "gen_ai.usage.* — populated only when the recording carried a usage block.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "root_selector": "seams",
+          "columns": [
+            {"selector": "seam", "text": "seam", "type": "string"},
+            {"selector": "input_tokens", "text": "input", "type": "number"},
+            {"selector": "output_tokens", "text": "output", "type": "number"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Seams per logical tick",
+      "type": "timeseries",
+      "datasource": "${datasource}",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "root_selector": "ticks",
+          "columns": [
+            {"selector": "logical_tick", "text": "tick", "type": "number"},
+            {"selector": "seam_count", "text": "seams", "type": "number"}
+          ]
+        }
+      ]
+    }
+  ]
+}

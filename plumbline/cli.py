@@ -111,6 +111,20 @@ def run_scenes(image_dir: str, labels_path: str, out_path: str) -> int:
     return 0
 
 
+def run_export(store_root: str, episode: str, out_path: str, fmt: str) -> int:
+    from plumbline.observability.feed import episode_telemetry, write_feed
+    from plumbline.observability.otlp import write_otlp
+
+    store = TraceStore(root=store_root)
+    loaded = store.load_episode(episode)
+    if fmt == "otlp":
+        write_otlp(loaded, out_path)
+    else:  # telemetry
+        write_feed(episode_telemetry(loaded), out_path)
+    print(f"wrote {fmt} for episode {episode!r} to {out_path}")
+    return 0
+
+
 def _serve(app: object, host: str, port: int) -> None:  # pragma: no cover - thin uvicorn wrapper
     import importlib
 
@@ -174,11 +188,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         "gate", help="Run the regression gate over golden episodes (§8)"
     )
     gate_parser.add_argument("config", help="Python file defining build() -> GateSpec")
+    gate_parser.add_argument("--emit-feed", help="Write the gate feed JSON (regression dashboard)")
 
     diff_parser = subparsers.add_parser("diff", help="Trace-diff two recorded episodes (§11)")
     diff_parser.add_argument("episode_a")
     diff_parser.add_argument("episode_b")
     diff_parser.add_argument("--store", required=True, help="TraceStore root directory")
+
+    export_parser = subparsers.add_parser(
+        "export", help="Export an episode as OTLP/JSON spans or a telemetry feed (§11)"
+    )
+    export_parser.add_argument("episode")
+    export_parser.add_argument("--store", required=True, help="TraceStore root directory")
+    export_parser.add_argument("-o", "--out", required=True, help="Output JSON path")
+    export_parser.add_argument("--format", choices=("otlp", "telemetry"), default="otlp")
 
     scenes_parser = subparsers.add_parser(
         "scenes", help="Author scenes.json for the Experiment-C leaderboard (§4)"
@@ -197,11 +220,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "gate":
             result = run_gate(load_gate_spec(args.config))
             print(format_report(result))
+            if args.emit_feed:
+                from plumbline.observability.feed import gate_feed, write_feed
+
+                write_feed(gate_feed(result), args.emit_feed)
             return 0 if result.passed else 1
         if args.command == "diff":
             return run_diff(args.episode_a, args.episode_b, args.store)
         if args.command == "scenes":
             return run_scenes(args.image_dir, args.labels, args.out)
+        if args.command == "export":
+            return run_export(args.store, args.episode, args.out, args.format)
     except (ValueError, FileNotFoundError, TypeError, KeyError) as exc:
         # Bad user input (missing config/store/episode/labels) — a clean message,
         # not a raw traceback. (SystemExit from _serve propagates unchanged.)

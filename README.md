@@ -42,12 +42,12 @@ Plumbline is built in vertical slices. What is implemented and tested today:
 | **WS2 Trace + proxy** (`proxy/`) — recording/replaying proxy, OpenAI/Gemini/Anthropic normalizers, OTel-GenAI schema, content-addressed store, SSE capture, ASGI proxy server | ✅ implemented & tested. The proxy uses an **injected** async transport, with a bundled ASGI server (uvicorn-runnable); TLS termination is left to a front proxy |
 | **WS3 Fidelity** (`fidelity/`) — decision distributions, the noise floor, caption/fusion loss, behavioral-equivalence judge | ✅ implemented & tested. The §14.5/§14.6 judgment calls (`render(G)`, `salient`) are **flagged for human review** |
 | **Bench** (`bench/`) — captioner-for-decisions leaderboard (Experiment C), caption verbosity/fidelity curve (Experiment A), OpenAI-compatible client, scene authoring | ✅ implemented & tested; **demonstrated on real models** — see [Results](#results) |
-| **WS5 adapters** (`adapters/`, `transport/`) — OM1 (proxy config, Zenoh tap, seam classification, counterfactual swap) **plus a generic OpenAI-agent-loop adapter** proving the frozen contract is runtime-agnostic (bus-less, derived action seam) | ✅ implemented & tested against *synthetic* episodes. A real Gazebo recording and sim ground-truth extraction are not yet done |
+| **WS5 adapters** (`adapters/`, `transport/`) — OM1 (proxy config, Zenoh tap, seam classification, counterfactual swap), a generic OpenAI-agent-loop adapter (bus-less, derived action seam), **plus a G1 humanoid adapter** (cross-embodiment) and an **ActionSchema-derived behavior matcher** — all proving the frozen contract is runtime- and embodiment-agnostic | ✅ implemented & tested against *synthetic* episodes. A real Gazebo recording and sim ground-truth extraction are not yet done |
 | **WS4 Gate** (`regression/`) — golden episodes, drift gate, `plumbline gate` CLI, GitHub Action | ✅ implemented & tested: the gate fails on an injected regression and passes on an unchanged config |
-| **WS4 Observability** (`observability/`) — baseline-comparison monitors (Experiment B), trace-diff viewer | ✅ monitors + trace-diff implemented & tested; Grafana dashboards not yet |
-| **CLI** (spec §11) | ✅ `record`, `replay`, `gate`, `diff`, `scenes` subcommands (record/replay run the proxy server; need uvicorn) |
+| **WS4 Observability** (`observability/`) — baseline-comparison monitors (Experiment B), trace-diff viewer, **Grafana dashboards + a dependency-free OTLP/feed exporter** | ✅ implemented & tested — see [docs/observability.md](docs/observability.md) |
+| **CLI** (spec §11) | ✅ `record`, `replay`, `gate`, `diff`, `scenes`, `export` subcommands (record/replay run the proxy server; need uvicorn) |
 
-The whole test suite (133 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
+The whole test suite (165 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
 
 ## Results
 
@@ -187,7 +187,7 @@ plumbline/
   regression/    # gate, drift, golden episodes
   adapters/      # adapter contract, OM1 adapter, recording-session coordinator
   bench/         # captioner leaderboard, OpenAI-compatible client, scene authoring
-  observability/ # baseline-comparison monitors, trace-diff viewer   (Grafana: not yet)
+  observability/ # baseline monitors, trace-diff, Grafana dashboards + OTLP/feed export
   cli.py         # record / replay / gate / diff / scenes subcommands
 examples/        # runnable Experiment-C demo (real models via Ollama)
 tests/           # determinism, divergence, re-execution, matchers, proxy, fidelity, judge, gate, om1, cli, ...

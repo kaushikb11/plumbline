@@ -165,9 +165,7 @@ def main() -> None:
         dec_latency_ms=dec_c,
     )
 
-    print(
-        "Experiment B — obstacle corridor; golden = wide FOV, candidate = narrow FOV\n"
-    )
+    print("Experiment B — obstacle corridor; golden = wide FOV, candidate = narrow FOV\n")
     print(f"  golden   : caption={wide_caption!r} -> action={golden_decision.get('action')}")
     print(f"  candidate: caption={narrow_caption!r} -> action={candidate_decision.get('action')}")
     golden_ms, candidate_ms = (cap_g + dec_g) / 2, (cap_c + dec_c) / 2

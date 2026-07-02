@@ -1,0 +1,99 @@
+{
+  "title": "Plumbline — Regression & Baselines",
+  "uid": "plumbline-regression",
+  "schemaVersion": 39,
+  "editable": true,
+  "tags": ["plumbline"],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Infinity datasource",
+        "type": "datasource",
+        "query": "yesoreyeram-infinity-datasource",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Behavioral drift per episode",
+      "type": "barchart",
+      "datasource": "${datasource}",
+      "description": "Per-episode action-sequence drift from the gate feed; compare to the threshold.",
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "root_selector": "episodes",
+          "columns": [
+            {"selector": "episode_id", "text": "episode", "type": "string"},
+            {"selector": "drift", "text": "drift", "type": "number"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Diverged fraction",
+      "type": "stat",
+      "datasource": "${datasource}",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "columns": [
+            {"selector": "diverged_fraction", "text": "diverged", "type": "number"},
+            {"selector": "max_drift", "text": "max drift", "type": "number"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Divergence seam per episode",
+      "type": "table",
+      "datasource": "${datasource}",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "root_selector": "episodes",
+          "columns": [
+            {"selector": "episode_id", "text": "episode", "type": "string"},
+            {"selector": "divergence_seam", "text": "seam", "type": "string"},
+            {"selector": "divergence_distance", "text": "distance", "type": "number"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Experiment B — observability contrast",
+      "type": "table",
+      "datasource": "${datasource}",
+      "description": "Baseline verdicts: latency + OTel-GenAI tracer green, plumbline-behavior red.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "refId": "A",
+          "type": "json",
+          "source": "url",
+          "root_selector": "verdicts",
+          "columns": [
+            {"selector": "name", "text": "monitor", "type": "string"},
+            {"selector": "status", "text": "status", "type": "string"},
+            {"selector": "detail", "text": "detail", "type": "string"}
+          ]
+        }
+      ]
+    }
+  ]
+}
