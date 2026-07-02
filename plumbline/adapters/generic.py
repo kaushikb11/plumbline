@@ -13,7 +13,8 @@ Targets any perception -> caption -> fuse -> decide loop that talks to an
 OpenAI-compatible endpoint. No `core/` or `Adapter`-Protocol change is required.
 """
 
-from collections.abc import Sequence
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from plumbline.adapters.base import Action, ActionSchema, BusTap, ClockHook, ProxyConfig
@@ -23,6 +24,10 @@ from plumbline.proxy.normalizers import contains_image
 
 # A neutral flat action vocabulary (distinct from OM1's typed move/skill/speak).
 DEFAULT_ACTIONS: tuple[str, ...] = ("move_forward", "turn_left", "turn_right", "back_up", "stop")
+
+
+class MalformedDecision(ValueError):
+    """A decide response with no extractable action (missing content / error body)."""
 
 
 @dataclass(frozen=True)
@@ -50,12 +55,11 @@ class GenericActionSchema:
                     continue
                 function = call.get("function")
                 if isinstance(function, dict):
-                    args = function.get("arguments")
                     actions.append(
                         Action(
                             "act",
                             _as_str(function.get("name")),
-                            args if isinstance(args, dict) else {},
+                            _tool_args(function.get("arguments")),
                         )
                     )
             return tuple(actions)
@@ -109,7 +113,7 @@ class GenericAgentAdapter:
         lowered = endpoint.lower()
         if contains_image(request.inline):
             return Seam.SENSOR_TO_CAPTION
-        if any(marker in lowered for marker in self.caption_markers):
+        if any(marker.lower() in lowered for marker in self.caption_markers):
             return Seam.SENSOR_TO_CAPTION  # a text-only perception/caption call
         return Seam.FUSE_TO_DECIDE
 
@@ -160,10 +164,12 @@ class GenericAgentAdapter:
     ) -> SeamEvent:
         """Derive DECIDE_TO_ACT from the decision response — the no-bus answer.
 
-        The action plan is a pure function of the recorded decide response, so on
-        faithful replay the derived request is byte-identical, and in counterfactual
-        replay a diverging decision already HALTS at FUSE_TO_DECIDE before this event
-        is minted (invariant 5, §6)."""
+        Called at record time. The action is a pure function of the recorded decide
+        response, so on faithful replay the derived request is byte-identical. In a
+        counterfactual captioner swap, a diverging decision halts at the first
+        downstream served seam (CAPTION_TO_FUSE) — no stale derived action is served
+        past a divergence (invariant 5, §6). Raises `MalformedDecision` if the decide
+        response has no extractable action."""
         request = Payload(inline={"action": _decided_action(decision_response)})
         response = Payload(inline={"dispatched": True})
         return SeamEvent(
@@ -183,7 +189,9 @@ class GenericAgentAdapter:
 
 def _decided_action(response: Payload) -> str:
     """Extract the decided action from a chat-completion (or an already-normalized
-    `{"action": ...}`) decide response."""
+    `{"action": ...}`) decide response. A genuinely empty decision (`content: ""`)
+    returns `""`; a response with NO extractable action (missing content, an error
+    body) raises `MalformedDecision` rather than silently minting `{"action": ""}`."""
     inline = response.inline
     if isinstance(inline, dict):
         choices = inline.get("choices")
@@ -193,7 +201,19 @@ def _decided_action(response: Payload) -> str:
                 return str(message["content"]).strip()
         if isinstance(inline.get("action"), str):
             return str(inline["action"]).strip()
-    return ""
+    raise MalformedDecision(f"no extractable action in decide response: {response.inline!r}")
+
+
+def _tool_args(arguments: JSONValue) -> Mapping[str, JSONValue]:
+    """OpenAI tool-call `arguments` is a JSON-encoded string on the wire; parse it
+    (or accept a pre-parsed dict). Malformed/other -> empty args."""
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except (json.JSONDecodeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return arguments if isinstance(arguments, dict) else {}
 
 
 def _as_str(value: JSONValue) -> str:

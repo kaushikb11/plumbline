@@ -51,20 +51,38 @@ def test_token_dice_exact() -> None:
     assert token_dice("a b", "b a") == 1.0  # symmetric over multisets
 
 
-def test_decision_fidelity_cliffs_while_surface_stays_high() -> None:
+def test_surface_metric_is_blind_to_which_word_is_lost() -> None:
+    """The knob-independent core of Experiment A: two equal-length captions degraded
+    the same amount have IDENTICAL surface similarity, but only one loses the
+    task-relevant word — so decision fidelity differs while the surface metric
+    cannot tell them apart. This is the honest thesis (no manufactured magnitude)."""
+    scene = LabeledScene("s", "data:,x", "there is an obstacle directly ahead")
+    # Both 4-token captions; at level 0.25 truncate keeps 3 (drops the last token).
+    keeps = run_verbosity_sweep(
+        [scene], lambda _s: "obstacle ahead now here", _probe, truncate, [0.25], n=8
+    ).points[0]
+    loses = run_verbosity_sweep(
+        [scene], lambda _s: "here now ahead obstacle", _probe, truncate, [0.25], n=8
+    ).points[0]
+    # Surface similarity is identical (same 3-of-4 tokens retained) — the metric is blind.
+    assert keeps.surface_similarity == loses.surface_similarity
+    # But the decision only survives when the task word survived.
+    assert keeps.decision_fidelity == 1.0
+    assert loses.decision_fidelity == 0.0
+
+
+def test_sweep_curve_on_a_constructed_step() -> None:
+    # Plumbing check on a CONSTRUCTED step: _CAPTION puts the task word last, so
+    # truncate drops it early by construction (this is a rendering check, not the
+    # thesis — see test_surface_metric_is_blind_to_which_word_is_lost for that).
     curve = run_verbosity_sweep([_SCENE], _captioner, _probe, truncate, linspace(0.0, 1.0, 11), n=8)
     fidelities = [p.decision_fidelity for p in curve.points]
     # Monotone non-increasing (equal-length slices for strict zip).
     assert all(b <= a for a, b in zip(fidelities[:-1], fidelities[1:], strict=True))
-    # Full caption preserves the decision; degradation eventually destroys it.
     assert curve.points[0].decision_fidelity == 1.0
     assert curve.points[-1].decision_fidelity == 0.0
-    # At the first level where the decision breaks, the surface metric is still high
-    # and strictly above the decision fidelity — the whole point of Experiment A.
     broken = next(p for p in curve.points if p.decision_fidelity == 0.0)
-    assert broken.surface_similarity >= 0.6
-    assert broken.surface_similarity > broken.decision_fidelity
-    assert curve.divergence > 0.5
+    assert broken.surface_similarity > broken.decision_fidelity  # surface lags the decision break
 
 
 def test_zero_degradation_is_lossless() -> None:
@@ -128,3 +146,34 @@ def test_as_table_renders() -> None:
     table = curve.as_table()
     assert "decision_fidelity" in table and "surface_similarity" in table
     assert len(table.splitlines()) == 2
+
+
+def test_multi_scene_sweep_averages_and_reports_per_scene() -> None:
+    obstacle = LabeledScene("obs", "data:,x", "there is an obstacle ahead")
+    clear = LabeledScene("clr", "data:,y", "the path is clear")
+
+    def caption(scene: LabeledScene) -> str:
+        return "the way looks obstacle" if scene.scene_id == "obs" else "the way is clear"
+
+    # level 0.5 keeps 2 of 4 tokens ("the way") -> obstacle scene loses its word, clear stays clear.
+    point = run_verbosity_sweep([obstacle, clear], caption, _probe, truncate, [0.5], n=8).points[0]
+    assert set(point.per_scene_loss) == {"obs", "clr"}
+    assert point.per_scene_loss["obs"] == 1.0  # obstacle dropped -> decision flips
+    assert point.per_scene_loss["clr"] == 0.0  # still clear -> decision preserved
+    assert point.mean_caption_loss == 0.5  # mean over the two scenes
+
+
+def test_reference_selector_can_compare_against_ground_truth() -> None:
+    scene = LabeledScene("s", "data:,x", "obstacle ahead")
+    # Compare the caption to render_g (a stricter, less flattering reference) instead
+    # of the full caption: disjoint words -> surface similarity 0 even at level 0.
+    point = run_verbosity_sweep(
+        [scene],
+        lambda _s: "a calm hallway view",
+        _probe,
+        truncate,
+        [0.0],
+        n=4,
+        reference=lambda scene_, _full: scene_.render_g,
+    ).points[0]
+    assert point.surface_similarity == 0.0

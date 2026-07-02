@@ -1,10 +1,11 @@
-"""Generic-adapter end-to-end (engineering spec §9.1, §15) — no bus.
+"""Generic-adapter record + store round-trip (engineering spec §9.1, §15) — no bus.
 
 Records a synthetic perception->caption->fuse->decide loop through the generic
 adapter (the action seam DERIVED from the decision response, not observed on a
-bus), faithful-replays it, and asserts the reproduced action sequence and
-byte-identical model I/O. This is the OM1 e2e proof re-run against a bus-less
-runtime — evidence the substrate does not require OM1's Zenoh mechanism.
+bus), then loads it back via `Replayer.faithful` (a trace load, not a re-execution
+— the re-drive proof is `test_reexecution.py`) and asserts the derived action
+sequence and byte-identical stored model I/O survive the round-trip. Evidence the
+substrate's trace/replay path does not require OM1's Zenoh mechanism.
 """
 
 import itertools

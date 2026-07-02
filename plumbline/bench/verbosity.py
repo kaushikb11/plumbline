@@ -1,11 +1,19 @@
 """Experiment A — the caption verbosity / fidelity curve (engineering spec §4, §7.6).
 
 Sweeps a caption from full detail down to nothing and plots downstream DECISION
-fidelity (`1 - caption_loss`, §7.3) against the degradation level, alongside a
-surface text-similarity metric. The thesis (spec §3.2): as a caption is stripped
-of information, decision fidelity falls off a CLIFF while surface similarity
-declines smoothly and stays high — so surface caption quality is a poor proxy for
+fidelity (`1 - caption_loss`, §7.3) against a surface text-similarity metric. The
+point (engineering spec §7 preamble, §7.6): a surface metric is BLIND TO WHICH
+words carry the decision — two captions with identical surface similarity can have
+opposite decision fidelity — so surface caption quality is a poor proxy for
 decision preservation, and only the decision-scored metric sees the break.
+
+HONEST SCOPE: the *magnitude* of the divergence is NOT a universal constant — it
+depends on the caption's structure and the degradation knob. `truncate` drops
+trailing tokens, so where fidelity breaks depends on WHERE the task-relevant words
+sit (task word last -> early break, large divergence; task word first -> no break
+until the caption is empty, divergence ~0). What is robust and knob-independent is
+the blindness itself (see `test_surface_metric_is_blind_to_which_word_is_lost`);
+this module illustrates that blindness, not a fixed cliff.
 
 Mirrors `bench/leaderboard.py` (Experiment C): reuses `caption_loss`'s ingredients
 and shares the per-scene oracle across the whole sweep. No robot, no simulator —
@@ -96,8 +104,10 @@ class BandwidthCurve:
 
     @property
     def divergence(self) -> float:
-        """Headline number: the largest gap where the surface metric says 'still the
-        same caption' while the decisions say 'broken'."""
+        """The largest gap where the surface metric says 'still the same caption'
+        while the decisions say 'broken'. NOTE: its magnitude is structure-dependent
+        (see the module docstring) — the robust finding is the blindness, not this
+        number."""
         return max((p.surface_similarity - p.decision_fidelity for p in self.points), default=0.0)
 
     def knee(self, *, threshold: float = 0.5) -> SweepPoint | None:
@@ -134,6 +144,11 @@ def run_verbosity_sweep(
     the level, so they are sampled once per scene and shared across the sweep — the
     same optimization `run_captioner_leaderboard` makes, and what keeps a real-model
     run affordable.
+
+    By default `surface` compares the degraded caption to the FULL caption ("how
+    much of the original caption's text survived"); pass `reference` to compare
+    against something else — e.g. `lambda scene, _full: scene.render_g` to measure
+    similarity to ground truth instead, which is a stricter, less flattering baseline.
     """
     select_reference: Reference = (
         reference if reference is not None else (lambda _scene, full: full)

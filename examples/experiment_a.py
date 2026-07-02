@@ -13,6 +13,11 @@ caption quality is a poor proxy for decision preservation. No robot, no simulato
 Overrides: PLUMBLINE_OLLAMA_URL / PLUMBLINE_VLM / PLUMBLINE_DECIDER. This is a
 synthetic illustration of the METRIC divergence (§4, §14.5), not an absolute
 bandwidth constant; `render_g` is the caption-agnostic dataset label.
+
+Honest caveat: `truncate` drops trailing tokens, so the divergence magnitude
+depends on where the VLM places the obstacle clause in its caption (a model that
+front-loads it will show little divergence). The robust, knob-independent finding
+is the blindness of the surface metric — see the unit tests — not the exact number.
 """
 
 import base64
