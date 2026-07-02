@@ -76,6 +76,9 @@ class CaptionerScore:
 
     @property
     def decision_fidelity(self) -> float:
+        # RELATIVE, not an absolute calibrated score: 1 - loss is meaningful for
+        # RANKING captioners within one fixed (render(G), decider, binning) harness,
+        # not as a portable cross-task fidelity number (see docs/limitations.md).
         return 1.0 - self.mean_caption_loss
 
 

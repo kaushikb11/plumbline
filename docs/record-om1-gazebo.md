@@ -8,9 +8,13 @@ established in [om1-integration.md](om1-integration.md).
 
 ## What gets captured at each seam
 
-- **SENSOR_TO_CAPTION** (VLM / ASR) — HTTP proxy, if the input type calls a remote
-  endpoint (e.g. a Gemini VLM). Local inputs (`VLM_COCO_Local`) have no model call to
-  intercept.
+- **SENSOR_TO_CAPTION** (VLM / ASR) — HTTP proxy **only if the input type makes an
+  HTTP (OpenAI-compatible) call**. ⚠️ OM1's *reference* config uses `VLMGeminiRTSP`
+  (RTSP video) and `GoogleASRInput` (streaming), which move data over RTSP + WebSocket
+  (`wss://api.openmind.com`) — the HTTP proxy **cannot** capture these, so this seam is
+  not recordable for the default config without a WebSocket/RTSP tap (see
+  [limitations.md](limitations.md) gap #1). Local inputs (`VLM_COCO_Local`) make no
+  network call at all. HTTP-based perception endpoints are the capturable case.
 - **CAPTION_TO_FUSE** — reconstructed by the adapter (no model call of its own).
 - **FUSE_TO_DECIDE** — HTTP proxy: the Cortex LLM chat call and its tool-call decision.
 - **DECIDE_TO_ACT** — Zenoh tap on the `cmd_vel` key (the CDR `Twist`), and/or

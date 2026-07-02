@@ -17,7 +17,7 @@ Plumbline does **not** control the runtime's internal wall-clock scheduler — *
 
 - The OM1 adapter's `clock_hook()` returns `None` today.
 - Absent that hook, loop **timing** may vary across replays (a faster or slower served response can shift when the next tick fires in wall-clock terms), while model **I/O** does not vary.
-- A diverged wall clock does not change the reproduced decision/action sequence, because that sequence is driven by served model I/O, not by wall time. The virtual clock records logical ticks so the loop's *logical* ordering is reconstructed from the trace rather than from wall time.
+- **Given a fixed sequence of model calls**, a diverged wall clock does not change the reproduced decision/action sequence, because that sequence is driven by served model I/O, not by wall time. The virtual clock records logical ticks so the loop's *logical* ordering is reconstructed from the trace rather than from wall time. CAVEAT: in an *async* loop, timing can change *which* model calls happen (e.g. which camera frame sits in the fuser's buffer when a tick fires) — that selection is upstream of every captured seam and is not controlled here (see [limitations.md](limitations.md)).
 
 ## The claim, stated atomically
 

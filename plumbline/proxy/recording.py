@@ -118,21 +118,31 @@ class ReplayingProxy:
     upstream: UpstreamFn | None = None  # for GO_LIVE / RECORD_NEW
     classifier: SeamClassifier = classify_seam
     digest: DigestFn = default_digest
-    _by_digest: dict[str, SeamEvent] = field(default_factory=dict, init=False, repr=False)
+    # Per-digest LIST (not first-wins): a runtime that re-issues the SAME request
+    # (e.g. a static scene at temperature > 0) recorded distinct sampled responses;
+    # they must be served in record order, not collapsed to the first — matching the
+    # seq-order Replayer path. A digest cursor tracks the next occurrence.
+    _by_digest: dict[str, list[SeamEvent]] = field(default_factory=dict, init=False, repr=False)
+    _digest_cursor: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _by_seam: dict[Seam, list[SeamEvent]] = field(default_factory=dict, init=False, repr=False)
     _cursor: dict[Seam, int] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         for event in self.store.load_episode(self.episode_id).events:
-            self._by_digest.setdefault(event.request_digest, event)
+            self._by_digest.setdefault(event.request_digest, []).append(event)
             self._by_seam.setdefault(event.seam, []).append(event)
 
     def faithful(self, request: Payload, ctx: Context) -> Payload:
-        """Serve the recorded response whose request_digest matches (§4.2)."""
-        event = self._by_digest.get(self.digest(request))
-        if event is None:
-            raise KeyError(f"no recorded response for request {self.digest(request)}")
-        return event.response
+        """Serve the recorded response for the next occurrence of this request digest
+        (§4.2). Repeated identical requests are served in record order; an extra
+        occurrence beyond what was recorded is a divergence, surfaced as a KeyError."""
+        digest = self.digest(request)
+        events = self._by_digest.get(digest, [])
+        index = self._digest_cursor.get(digest, 0)
+        if index >= len(events):
+            raise KeyError(f"no recorded response for request {digest}")
+        self._digest_cursor[digest] = index + 1
+        return events[index].response
 
     def counterfactual(self, request: Payload, ctx: Context) -> Payload:
         """Match the live request to the next recorded call at its seam; serve the

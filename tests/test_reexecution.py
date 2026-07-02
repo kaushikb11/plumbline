@@ -17,12 +17,13 @@ seed) must differ, proving the serving is doing the work.
 import random
 from collections.abc import Callable
 
+import pytest
 from plumbline.core.clock import VirtualClock
 from plumbline.core.interceptor import Context
 from plumbline.core.recorder import Recorder
 from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
-from plumbline.core.trace import JSONValue, Payload
+from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonical_dumps, canonicalize
 from plumbline.proxy import RecordingProxy, ReplayingProxy
 
 from tests.toyloop import DEFAULT_RULES, StubCaptioner, StubDecider, fuse, make_frames
@@ -109,3 +110,38 @@ def test_replay_reexecution_reproduces_actions_while_live_run_diverges() -> None
     )
     live_actions = _drive(live_upstream)
     assert live_actions != recorded_actions
+
+
+def test_replaying_proxy_serves_repeated_identical_requests_in_record_order() -> None:
+    # A static scene at temperature > 0: the runtime re-issues the SAME request and
+    # record captured two DIFFERENT sampled responses. Faithful re-drive must serve
+    # them in record order, not collapse both to the first (the old setdefault bug).
+    store = TraceStore()
+    recorder = Recorder(store, VirtualClock())
+    recorder.open_episode("dup", {})
+    request = Payload(inline={"messages": [{"role": "user", "content": "same"}]})
+    digest = canonicalize(request).digest
+    for seq, content in enumerate(("first", "second")):
+        recorder.record(
+            SeamEvent(
+                "dup",
+                seq,
+                Seam.FUSE_TO_DECIDE,
+                0,
+                0.0,
+                request,
+                Payload(inline={"choices": [{"message": {"content": content}}]}),
+                "stub/model",
+                {},
+                digest,
+                0.0,
+            )
+        )
+    recorder.close_episode("dup")
+
+    replay = ReplayingProxy(store, "dup")
+    assert '"content":"first"' in canonical_dumps(replay.faithful(request, _CTX).inline)
+    assert '"content":"second"' in canonical_dumps(replay.faithful(request, _CTX).inline)
+    # A third identical request was never recorded -> a divergence, surfaced loudly.
+    with pytest.raises(KeyError):
+        replay.faithful(request, _CTX)
