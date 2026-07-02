@@ -1,4 +1,4 @@
-"""Real captioner / decider over an OpenAI-compatible endpoint (§4, §7 — no robot).
+"""Real captioner / decider over an OpenAI-compatible endpoint (§7.6 — no robot).
 
 Lets Experiment C run with real models and no robot or simulator: point `base_url`
 at a local Ollama (`http://localhost:11434/v1`, `llava` for vision + a text model
@@ -16,11 +16,12 @@ from typing import Any
 
 import httpx
 
+# Single source of truth for the neutral action vocabulary (defined in the adapter).
+from plumbline.adapters.generic import DEFAULT_ACTIONS
 from plumbline.bench.leaderboard import Captioner, LabeledScene
 from plumbline.core.trace import JSONValue
 from plumbline.fidelity import DeciderFn
 
-DEFAULT_ACTIONS: tuple[str, ...] = ("move_forward", "turn_left", "turn_right", "back_up", "stop")
 _CAPTION_INSTRUCTION = "Describe the scene in one sentence for a robot deciding how to move."
 
 

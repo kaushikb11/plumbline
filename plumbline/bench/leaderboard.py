@@ -1,4 +1,4 @@
-"""Captioner-for-decisions leaderboard — Experiment C (engineering spec §4, §7.6).
+"""Captioner-for-decisions leaderboard — Experiment C (engineering spec §7.6).
 
 Rank candidate VLM captioners by downstream *decision* success, not caption
 surface quality: for each labeled scene a captioner produces a caption, and its

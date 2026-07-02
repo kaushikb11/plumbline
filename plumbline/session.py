@@ -125,12 +125,11 @@ class RecordingSession(Recorder):
 
     def record(self, event: SeamEvent) -> None:
         with self._lock:
-            if self._closed:
-                # A bus sample in flight after close() (the tap fires on a Zenoh
-                # thread): drop it rather than crash the tap thread on a sealed
-                # episode. The late action is intentionally not recorded. A record
-                # BEFORE open() is a caller-ordering bug and is left to surface, not
-                # silently dropped (which would hide a lost first action).
+            if self._closed or not self._opened:
+                # The tap fires on a Zenoh thread; a sample arriving after close()
+                # (sealed episode) or before open() (caller-ordering bug) is dropped
+                # rather than raised — a crashing callback can wedge the subscriber,
+                # which is worse than a dropped sample for either boundary case.
                 return
             super().record(replace(event, seq=next(self._seq)))
 

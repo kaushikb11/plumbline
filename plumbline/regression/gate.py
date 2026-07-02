@@ -95,6 +95,9 @@ class GateSpec:
     drift_threshold: float
     policy: FailurePolicy = FailurePolicy.ANY
     quantile: float = 0.95  # used only when policy is QUANTILE
+    # The §14.6 per-step action-equivalence matcher (sets the false-positive rate).
+    # Threaded through to gate() so a CI config can override the strict default.
+    behavior_matcher: Matcher = _EXACT_MATCHER
 
 
 def gate(
@@ -134,7 +137,9 @@ def gate(
                 divergence_distance=result.divergence_distance,
             )
         )
-    passed = _passes([d.drift for d in drifts], drift_threshold, policy, quantile)
+    # An empty golden set cannot certify "no regression" — fail rather than pass
+    # vacuously (a mis-loaded corpus must not silently green a CI gate).
+    passed = bool(drifts) and _passes([d.drift for d in drifts], drift_threshold, policy, quantile)
     return GateResult(
         passed=passed, threshold=drift_threshold, policy=policy, per_episode=tuple(drifts)
     )

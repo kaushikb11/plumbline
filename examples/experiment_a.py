@@ -2,9 +2,10 @@
 
 Generates corridor scenes with an obstacle, asks a real VLM for a detailed caption,
 then sweeps a degradation knob (progressively truncating the caption) and plots
-downstream DECISION fidelity against a surface text-similarity metric. The point:
-decision fidelity falls off a cliff while surface similarity stays high — surface
-caption quality is a poor proxy for decision preservation. No robot, no simulator.
+downstream DECISION fidelity against a surface text-similarity metric. The point: a
+surface metric is blind to WHICH words carry the decision, so it is a poor proxy for
+decision preservation — decision fidelity can collapse while surface similarity is
+still high. No robot, no simulator.
 
     pip install -e ".[proxy]" pillow
     ollama pull moondream && ollama pull llama3.2:1b

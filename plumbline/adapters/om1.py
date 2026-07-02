@@ -1,9 +1,13 @@
 """The OM1 adapter (engineering spec §9.2) — the flagship reference integration.
 
-Targets OM1's documented language-bus contract and provider interface, not
-fragile internal structs, so it survives OM1's beta churn. Two mechanisms:
-the recording HTTP proxy for the model seams (vision/ASR and the Cortex LLM) and
-a Zenoh tap for the action seam.
+Aims at OM1's language-bus contract and provider interface rather than fragile
+internal structs. Two mechanisms: the recording HTTP proxy for the model seams
+(vision/ASR and the Cortex LLM) and a Zenoh tap for the action seam.
+
+NOTE: the concrete wiring specifics — provider base-URL env vars, Zenoh key
+expressions, config-field paths — are inferred and flagged UNVERIFIED inline; they
+must be confirmed against a real OM1 build before a live recording (CLAUDE.md
+medium-leash / WS5). This is not yet validated against an actual Gazebo episode.
 """
 
 from collections.abc import Mapping, Sequence
@@ -110,9 +114,13 @@ class OM1Adapter:
     def bus_tap(self) -> BusTap | None:
         if self.zenoh_session is None:
             return None
+        # Tap ONLY the action keys: samples from this tap are recorded as the
+        # DECIDE_TO_ACT seam, so mixing in data-bus (telemetry / natural-language
+        # context) keys would mis-record telemetry as actions. `data_bus_key_expressions`
+        # is reserved for a future separate data-bus tap, not this action tap.
         return ZenohTap(
             session=self.zenoh_session,
-            key_expressions=self.action_key_expressions + self.data_bus_key_expressions,
+            key_expressions=self.action_key_expressions,
         )
 
     def seam_of(self, request: Payload, endpoint: str) -> Seam:

@@ -32,7 +32,9 @@ class MatchVerdict:
     """
 
     is_match: bool
-    distance: float  # 0.0 = identical; matcher-specific scale
+    # 0.0 = identical; the scale is matcher-specific and only comparable within a
+    # fixed (seam, matcher) pair — do NOT compare distances across matchers/seams.
+    distance: float
     reason: str
 
 
@@ -113,6 +115,12 @@ class NumericToleranceMatcher:
                 structural = True
                 continue
             a, b = live_nums[key], recorded_nums[key]
+            if not math.isfinite(a) or not math.isfinite(b):
+                # A NaN/Inf field is maximal corruption, not a zero-distance match —
+                # keep the distance scale consistent with ExactMatcher's NaN handling.
+                structural = True
+                numeric_mismatch = True
+                continue
             max_diff = max(max_diff, abs(a - b))
             if not math.isclose(a, b, rel_tol=self.rtol, abs_tol=self.atol):
                 numeric_mismatch = True
@@ -187,28 +195,33 @@ def _extract_text(payload: Payload) -> str:
     return " ".join(parts)
 
 
-def _numeric_fields(payload: Payload) -> dict[str, float]:
+_Path = tuple[str | int, ...]
+
+
+def _numeric_fields(payload: Payload) -> dict[_Path, float]:
     """Every numeric leaf of inline content, keyed by its path.
 
     Recurses into nested dicts/lists (`pose.x`, `commands[0].vx`) so coordinate
     payloads — which are almost always nested or list-shaped — are actually
-    compared, rather than yielding an empty set and a vacuous match.
+    compared, rather than yielding an empty set and a vacuous match. Paths are
+    TUPLES (not joined strings) so they are injective: `{"a": {"b": 5}}` and
+    `{"a.b": 5}` map to distinct keys and cannot falsely compare equal.
     """
-    result: dict[str, float] = {}
+    result: dict[_Path, float] = {}
 
-    def walk(prefix: str, value: JSONValue) -> None:
+    def walk(prefix: _Path, value: JSONValue) -> None:
         if isinstance(value, bool):
             return  # bool is an int subclass; not a pose coordinate
         if isinstance(value, (int, float)):
             result[prefix] = float(value)
         elif isinstance(value, dict):
             for key, item in value.items():
-                walk(f"{prefix}.{key}" if prefix else key, item)
+                walk((*prefix, key), item)
         elif isinstance(value, list):
             for index, item in enumerate(value):
-                walk(f"{prefix}[{index}]", item)
+                walk((*prefix, index), item)
 
-    walk("", payload.inline)
+    walk((), payload.inline)
     return result
 
 
@@ -222,24 +235,25 @@ def _canonical_equal(live: Payload, recorded: Payload) -> bool | None:
         return None
 
 
-def _non_numeric_fields(payload: Payload) -> dict[str, str]:
-    """Every NON-numeric leaf (str/bool/null) keyed by path, tagged by type, so the
-    structural skeleton is compared exactly (numeric leaves get tolerance instead)."""
-    result: dict[str, str] = {}
+def _non_numeric_fields(payload: Payload) -> dict[_Path, str]:
+    """Every NON-numeric leaf (str/bool/null) keyed by (injective, tuple) path,
+    tagged by type, so the structural skeleton is compared exactly (numeric leaves
+    get tolerance instead)."""
+    result: dict[_Path, str] = {}
 
-    def walk(prefix: str, value: JSONValue) -> None:
+    def walk(prefix: _Path, value: JSONValue) -> None:
         if isinstance(value, bool):
             result[prefix] = f"bool:{value}"
         elif isinstance(value, (int, float)):
             return  # numeric: compared with tolerance elsewhere
         elif isinstance(value, dict):
             for key, item in value.items():
-                walk(f"{prefix}.{key}" if prefix else key, item)
+                walk((*prefix, key), item)
         elif isinstance(value, list):
             for index, item in enumerate(value):
-                walk(f"{prefix}[{index}]", item)
+                walk((*prefix, index), item)
         else:  # str or None
             result[prefix] = f"{type(value).__name__}:{value}"
 
-    walk("", payload.inline)
+    walk((), payload.inline)
     return result

@@ -39,11 +39,12 @@ ASGIApp = Callable[[ASGIScope, ASGIReceive, ASGISend], Awaitable[None]]
 # Hop-by-hop / length / encoding headers we let the transport recompute rather
 # than forward verbatim (a forwarded content-length or gzip content-encoding would
 # not match the re-emitted body).
+_TICK_HEADER = "x-plumbline-tick"
 _DROP_REQUEST_HEADERS = frozenset(
-    {"host", "content-length", "connection", "transfer-encoding", "accept-encoding"}
+    # ...plus the internal loop-tick header, so it is never forwarded upstream.
+    {"host", "content-length", "connection", "transfer-encoding", "accept-encoding", _TICK_HEADER}
 )
 _DROP_RESPONSE_HEADERS = frozenset({"content-length", "content-encoding", "transfer-encoding"})
-_TICK_HEADER = "x-plumbline-tick"
 
 
 class HttpxTransport:
@@ -198,7 +199,9 @@ async def _send_response(send: ASGISend, response: HTTPResponse) -> None:
         "headers": header_list,
     }
     await send(start)
-    if response.stream is not None:
+    # An empty stream (chunks == ()) must still send exactly one terminal body
+    # message, or the ASGI response is incomplete — hence the `and .chunks` guard.
+    if response.stream is not None and response.stream.chunks:
         chunks = response.stream.chunks
         for index, chunk in enumerate(chunks):
             body: ASGIMessage = {

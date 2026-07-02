@@ -32,6 +32,7 @@ import argparse
 import importlib.util
 import json
 import os
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -47,6 +48,7 @@ def run_gate(spec: GateSpec) -> GateResult:
         spec.golden,
         spec.config,
         spec.drift_threshold,
+        behavior_matcher=spec.behavior_matcher,
         policy=spec.policy,
         quantile=spec.quantile,
     )
@@ -187,18 +189,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.command == "record":
-        return run_record(args.upstream, args.store, args.episode, args.host, args.port)
-    if args.command == "replay":
-        return run_replay(args.store, args.episode, args.host, args.port)
-    if args.command == "gate":
-        result = run_gate(load_gate_spec(args.config))
-        print(format_report(result))
-        return 0 if result.passed else 1
-    if args.command == "diff":
-        return run_diff(args.episode_a, args.episode_b, args.store)
-    if args.command == "scenes":
-        return run_scenes(args.image_dir, args.labels, args.out)
+    try:
+        if args.command == "record":
+            return run_record(args.upstream, args.store, args.episode, args.host, args.port)
+        if args.command == "replay":
+            return run_replay(args.store, args.episode, args.host, args.port)
+        if args.command == "gate":
+            result = run_gate(load_gate_spec(args.config))
+            print(format_report(result))
+            return 0 if result.passed else 1
+        if args.command == "diff":
+            return run_diff(args.episode_a, args.episode_b, args.store)
+        if args.command == "scenes":
+            return run_scenes(args.image_dir, args.labels, args.out)
+    except (ValueError, FileNotFoundError, TypeError, KeyError) as exc:
+        # Bad user input (missing config/store/episode/labels) — a clean message,
+        # not a raw traceback. (SystemExit from _serve propagates unchanged.)
+        print(f"plumbline {args.command}: {exc}", file=sys.stderr)
+        return 1
     return 2  # unreachable: argparse requires a known subcommand
 
 

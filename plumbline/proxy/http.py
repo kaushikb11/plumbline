@@ -103,7 +103,9 @@ class AsyncHTTPProxy:
         for data in {**normalized_request.blobs, **response_blobs}.values():
             self._store.put_blob(data, BlobKind.BIN)  # content-addressed (§5.3)
 
-        params = dict(normalized_request.params or ctx.params)
+        # Merge (not either/or): a caller's ctx.params are preserved and the
+        # normalizer's extracted params (temperature, etc.) take precedence.
+        params: dict[str, JSONValue] = {**ctx.params, **normalized_request.params}
         params[_HTTP_STATUS_KEY] = response.status
 
         seq = self._seq[ctx.episode_id]

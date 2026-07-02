@@ -33,6 +33,7 @@ sequence-aware serving (a proxy enhancement), not by-digest serving.
 ===============================================================================
 """
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -44,9 +45,10 @@ from plumbline.fidelity.decision import Divergence, self_divergence, total_varia
 JudgeModel = Callable[[Payload], Payload]
 
 _EXACT_MATCHER: Matcher = ExactMatcher()
-_NEGATIONS = ("not ", "n't", "no ", "never ", "cannot")
-_DIFFERENT_TOKENS = ("diverge", "differ", "different")
-_SAME_TOKENS = ("equivalent", "identical", "same", "yes")
+_WORD = re.compile(r"[a-z]+")
+_NEGATION_WORDS = frozenset({"not", "no", "never", "cannot", "without"})
+_DIFFERENT_WORDS = frozenset({"diverge", "diverges", "diverged", "differ", "differs", "different"})
+_SAME_WORDS = frozenset({"equivalent", "identical", "same", "equal", "yes"})
 
 
 @dataclass(frozen=True)
@@ -131,55 +133,44 @@ def judge_noise_floor(
     *,
     divergence: Divergence = total_variation,
 ) -> float:
-    """The LLM judge's own self-disagreement on a fixed pair (§7.5), measured by
-    the same split-half estimator as sigma. Record/live-mode (see REPLAY CAVEAT)."""
+    """The LLM judge's own self-disagreement on a fixed pair (§7.5). Draws 2N and
+    splits into two N-halves, matching `decision_stability`'s sample-size convention
+    so the judge floor is measured at the same scale as sigma. Record/live-mode."""
     prompt = behavioral_equivalence_prompt(sequence_a, sequence_b)
     labels = [
         "equivalent" if _parse_equivalent(judge_model(prompt)) else "not_equivalent"
-        for _ in range(n)
+        for _ in range(2 * n)
     ]
     return self_divergence(labels, divergence=divergence)
 
 
 def _parse_equivalent(response: Payload) -> bool:
-    """Parse the judge's verdict, negation-aware by PROXIMITY (not whole-string).
+    """Parse the judge's verdict — WORD- and CLAUSE-aware (not substring).
 
     The prompt enforces 'EQUIVALENT' / 'NOT EQUIVALENT', but a judge that ignores
-    the format may hedge or compound. Each polarity token's meaning is flipped only
-    if a negation immediately precedes it, so 'not fully equivalent' and 'different,
-    not identical' read as NOT equivalent while 'they do not diverge' reads as
-    equivalent. Any surviving difference signal wins (conservative for a gate)."""
+    the format may hedge or compound. Polarity WORDS are matched (so 'yes' does not
+    match 'eyes', nor 'equivalent' match 'inequivalent'); within each clause a word
+    is negated iff a negation word precedes it in that clause. So 'not fully
+    equivalent' and 'different, not identical' read NOT equivalent, while 'they do
+    not diverge; identical' reads equivalent. Any surviving difference signal wins
+    (conservative for a gate); unparseable -> NOT equivalent."""
     text = " ".join(_text_leaves(response.inline)).lower()
     difference = False
     equivalence = False
-    for token in _DIFFERENT_TOKENS:
-        start = text.find(token)
-        while start != -1:
-            if _negated_before(text, start):
-                equivalence = True  # e.g. "do not diverge" -> equivalent
-            else:
-                difference = True
-            start = text.find(token, start + 1)
-    for token in _SAME_TOKENS:
-        start = text.find(token)
-        while start != -1:
-            if _negated_before(text, start):
-                difference = True  # e.g. "not equivalent" / "not the same"
-            else:
-                equivalence = True
-            start = text.find(token, start + 1)
+    for clause in re.split(r"[;,.\n!?:]", text):
+        negated = False
+        for word in _WORD.findall(clause):
+            if word in _NEGATION_WORDS:
+                negated = True
+            elif word in _DIFFERENT_WORDS:
+                equivalence = equivalence or negated  # "do not diverge" -> equivalent
+                difference = difference or not negated
+            elif word in _SAME_WORDS:
+                difference = difference or negated  # "not equivalent" -> not equivalent
+                equivalence = equivalence or not negated
     if difference:
         return False  # any difference signal wins
-    return equivalence  # else equivalent iff a same-signal was seen; unparseable -> False
-
-
-def _negated_before(text: str, index: int) -> bool:
-    """Whether a negation binds to the token at `index`: look back only within the
-    current clause (to the last ; , . : boundary) and a short word window, so a
-    negation in a PRIOR clause ('do not diverge; identical') doesn't flip this token."""
-    boundary = max((text.rfind(ch, 0, index) for ch in ";,.:"), default=-1)
-    start = max(boundary + 1, index - 20)
-    return any(neg in text[start:index] for neg in _NEGATIONS)
+    return equivalence  # equivalent iff a same-signal was seen; unparseable -> False
 
 
 def _text_leaves(value: JSONValue) -> list[str]:

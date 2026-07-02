@@ -1,4 +1,4 @@
-"""Experiment A — the caption verbosity / fidelity curve (engineering spec §4, §7.6).
+"""Experiment A — the caption verbosity / fidelity curve (engineering spec §7.6).
 
 Sweeps a caption from full detail down to nothing and plots downstream DECISION
 fidelity (`1 - caption_loss`, §7.3) against a surface text-similarity metric. The

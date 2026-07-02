@@ -1,8 +1,11 @@
-"""Experiment A — caption verbosity/fidelity curve (engineering spec §4, §7.6).
+"""Experiment A — caption verbosity/fidelity curve (engineering spec §7.6).
 
-The thesis as a checkable result: as a caption is degraded, decision fidelity
-cliffs while a surface text-similarity metric declines smoothly and stays high.
-Uses a deterministic content-only probe decider (sigma = 0) so values are exact.
+The thesis as a checkable result: a surface text-similarity metric is blind to
+WHICH word carries the decision — two captions with identical surface similarity can
+have opposite decision fidelity (the knob-independent finding). The divergence
+*magnitude* is structure-dependent, so the "cliff" tests only validate the sweep on
+a constructed case. Uses a deterministic content-only probe decider (sigma = 0) so
+values are exact.
 """
 
 from collections.abc import Mapping

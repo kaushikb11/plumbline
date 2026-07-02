@@ -25,6 +25,9 @@ zenoh = ["eclipse-zenoh>=1.0.0"]
 # A real semantic embedder for the free-text matcher / gate (spec §3.7). Lazily
 # imported (plumbline.embedding), so it does not weigh on the core install.
 embeddings = ["sentence-transformers>=3.0"]
+# The runnable examples (examples/experiment_a.py, experiment_c.py) generate images
+# and call an OpenAI-compatible endpoint.
+examples = ["pillow>=10", "httpx>=0.27"]
 dev = [
     "ruff>=0.6",
     "mypy>=1.11",

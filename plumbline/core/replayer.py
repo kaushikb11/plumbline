@@ -127,7 +127,19 @@ class Replayer:
         Events within a tick are processed in recorded (seq) order, which is
         pipeline order (`_PIPELINE`); all events are served, including repeated
         calls at the same seam in one tick (e.g. multi-camera / multi-caption).
+
+        SCOPE: only the ISOLATED frontier (a single live seam, §6.2) is supported in
+        pure-trace replay. A multi-seam (downstream-live / pinned-decision) frontier
+        would require feeding one live seam's output into the next as input — a true
+        runtime re-drive across a shape-changing pipeline that pure-trace replay
+        cannot do (§6.5). Rather than return a silently-uncomposed, wrong
+        `diverged=False` result, such a frontier is rejected explicitly.
         """
+        if len(live_frontier) > 1:
+            raise NotImplementedError(
+                "pure-trace counterfactual supports a single-seam (isolated) live_frontier; "
+                "a multi-seam downstream-live frontier requires a runtime re-drive (§6.5)"
+            )
         episode = self._store.load_episode(episode_id)
         self._clock.bind_replay(episode)
 

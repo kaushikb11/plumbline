@@ -77,7 +77,14 @@ def assemble_openai(stream: CapturedStream) -> JSONValue:
         for payload in data_payloads(chunk):
             if payload == "[DONE]":
                 continue
-            obj = json.loads(payload)
+            try:
+                obj = json.loads(payload)
+            except (json.JSONDecodeError, ValueError):
+                # A non-JSON data: line (heartbeat, non-OpenAI framing) degrades the
+                # assembled inspection body, but must NOT crash record() — the raw
+                # chunks (what replay re-emits) are already captured. Matches the
+                # decode-guard hardening in _decode_json and the Zenoh tap.
+                continue
             if isinstance(obj, dict):
                 response_id = obj.get("id", response_id)
                 model = obj.get("model", model)

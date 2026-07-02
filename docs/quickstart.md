@@ -1,6 +1,6 @@
 # Quickstart
 
-This walks the operator flow — **point base URLs at the proxy → record → replay → measure fidelity** — using the shipped Python API. Every snippet here runs against the current build (Python ≥ 3.12). The `plumbline record/replay/gate` CLI (spec §11) and the CI gate (WS4) are not yet implemented; this is the API you use in the meantime.
+This walks the operator flow — **point base URLs at the proxy → record → replay → measure fidelity** — using the shipped Python API. Every snippet here runs against the current build (Python ≥ 3.12). The `plumbline record / replay / gate / diff / scenes` CLI (spec §11) and the CI gate (WS4) are implemented and tested; the Python API below is what those subcommands wrap.
 
 ## 1. Point your runtime at the proxy (zero source changes)
 
@@ -133,6 +133,12 @@ For real-robot recordings with no ground truth, use the behavioral-equivalence j
 
 > **Open decisions requiring human review** before fidelity numbers are published: `render(G)` extraction (§14.5) and the `salient`/`weights` operation for fusion loss (§14.6). Both are surfaced in `fidelity/metrics.py` and guarded by `salient_artifact()`. See the `HUMAN REVIEW` banners in that module.
 
-## 5. Gate — roadmap (WS4)
+## 5. Gate (WS4)
 
-The regression gate — counterfactual-replay a set of golden episodes under a candidate config, score behavior drift with the structural/semantic judge, fail CI past a threshold — is the next workstream and is **not yet implemented**. Its design is engineering spec §8; the GitHub Action wraps the same `counterfactual` + judge machinery shown above.
+The regression gate — counterfactual-replay a set of golden episodes under a candidate config, score behavior drift, fail CI past a threshold — is implemented and tested (engineering spec §8). Run it from the CLI:
+
+```bash
+plumbline gate path/to/gate_config.py     # exits non-zero on drift; wrap in CI
+```
+
+The gate config is a Python file exposing `build() -> GateSpec`; a ready example is `plumbline/bench/example_gate.py`, and the shipped GitHub Action (`.github/workflows/robot-behavior-gate.yml`) wraps this command. See [docs/results-experiment-c.md](results-experiment-c.md) for the fidelity results and `plumbline diff` / `plumbline scenes` for the trace-diff and Experiment-C authoring tools.
