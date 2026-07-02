@@ -13,6 +13,7 @@ The numeric `walk(vx, vy, vyaw)` velocities are the natural first consumer of
 `ActionSchemaMatcher` (numeric-tolerant behavioral drift).
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from plumbline.adapters.base import Action, ActionSchema, BusTap, ClockHook, ProxyConfig
@@ -132,7 +133,7 @@ class G1Adapter:
         episode_id: str,
         seq: int,
         logical_tick: int,
-        captions: list[JSONValue],
+        captions: Sequence[JSONValue],
         fused_prompt: JSONValue,
         wall_ts: float = 0.0,
     ) -> SeamEvent:

@@ -64,3 +64,36 @@ def test_cli_export_telemetry(tmp_path: Path) -> None:
     assert code == 0
     feed: Any = json.loads(out.read_text(encoding="utf-8"))
     assert feed["episode_id"] == "ep"
+
+
+def _write_gate_config(config_path: Path, store_root: str) -> None:
+    config_path.write_text(
+        "from plumbline.core.store import TraceStore\n"
+        "from plumbline.regression import Config, GateSpec, GoldenSet\n\n\n"
+        "def build():\n"
+        f"    store = TraceStore(root={store_root!r})\n"
+        "    golden = GoldenSet(store)\n"
+        "    golden.add('ep')\n"
+        "    cfg = Config(live_frontier=set(), overrides={}, matchers={})\n"
+        "    return GateSpec(store=store, golden=golden, config=cfg, drift_threshold=0.1)\n",
+        encoding="utf-8",
+    )
+
+
+def test_cli_gate_emit_feed(tmp_path: Path) -> None:
+    _record(str(tmp_path / "traces"))
+    config = tmp_path / "gate_config.py"
+    _write_gate_config(config, str(tmp_path / "traces"))
+    feed = tmp_path / "gate_feed.json"
+    assert main(["gate", str(config), "--emit-feed", str(feed)]) == 0
+    data: Any = json.loads(feed.read_text(encoding="utf-8"))
+    assert "passed" in data
+
+
+def test_cli_gate_emit_feed_write_failure_preserves_verdict(tmp_path: Path) -> None:
+    _record(str(tmp_path / "traces"))
+    config = tmp_path / "gate_config.py"
+    _write_gate_config(config, str(tmp_path / "traces"))
+    bad = tmp_path / "missing_dir" / "feed.json"  # parent dir does not exist
+    # A feed-write failure must NOT flip the gate PASS into a nonzero exit.
+    assert main(["gate", str(config), "--emit-feed", str(bad)]) == 0

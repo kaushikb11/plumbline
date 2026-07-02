@@ -223,7 +223,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.emit_feed:
                 from plumbline.observability.feed import gate_feed, write_feed
 
-                write_feed(gate_feed(result), args.emit_feed)
+                # A feed-write failure must NOT flip the gate verdict (the CI signal)
+                # into a false pass/fail — warn and preserve the real exit code.
+                try:
+                    write_feed(gate_feed(result), args.emit_feed)
+                except OSError as exc:
+                    print(f"plumbline gate: could not write feed: {exc}", file=sys.stderr)
             return 0 if result.passed else 1
         if args.command == "diff":
             return run_diff(args.episode_a, args.episode_b, args.store)

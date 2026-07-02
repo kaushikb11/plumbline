@@ -16,8 +16,10 @@ Override the endpoint/models with PLUMBLINE_OLLAMA_URL / PLUMBLINE_VLM /
 PLUMBLINE_DECIDER.
 
 Honest caveats: synthetic corridor scenes, small local models, per-run and
-nondeterministic — the decision inversion is guarded, not guaranteed every run;
-rerun on a cold-start latency blip. The Experiment-B property (baselines green while
+nondeterministic — the decision inversion is guarded, not guaranteed every run. The
+narrow crop feeds fewer vision tokens, so the candidate can run *faster*, not just
+slower — either can push mean model latency outside the monitor's tolerance and trip
+it; rerun. The Experiment-B property (baselines green while
 Plumbline red) is proven deterministically in tests/test_baselines.py; this file is
 the live-model demonstration, not the proof. No wall-clock / scheduler determinism
 is claimed (invariant 4, §3.4) — only the model I/O and the derived action sequence.

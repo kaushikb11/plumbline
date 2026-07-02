@@ -51,7 +51,11 @@ def event_to_otlp_span(event: SeamEvent) -> dict[str, JSONValue]:
 
 def write_otlp(episode: Episode, path: str | Path, *, service_name: str = "plumbline") -> None:
     document = episode_to_otlp(episode, service_name=service_name)
-    Path(path).write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+    # allow_nan=False (matching canonical_dumps): a non-finite param must not emit the
+    # non-standard NaN/Infinity tokens that strict parsers and OTLP collectors reject.
+    Path(path).write_text(
+        json.dumps(document, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8"
+    )
 
 
 def _otlp_attributes(attrs: Mapping[str, JSONValue]) -> list[JSONValue]:

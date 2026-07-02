@@ -13,9 +13,11 @@ outputs*, not span attributes. So there are two artifact families:
 
 1. **OTLP/JSON spans** — the standard interchange. `plumbline export EP --format otlp`
    writes an OTLP `resourceSpans` document (from `to_span`). POST it to a Grafana
-   Tempo OTLP/HTTP endpoint (or any OTel-GenAI backend — Tempo, Phoenix, Langfuse)
-   and the trace loads unchanged. `traceId`/`spanId` are sha256-derived, so
-   re-exporting an episode is byte-identical.
+   Tempo OTLP/HTTP endpoint (or any OTel-GenAI backend — Tempo, Phoenix, Langfuse):
+   it is standard OTLP/JSON and should load as a normal trace. (Only the JSON shape,
+   determinism, and no-payload-leak are unit-tested; the against-a-live-backend step
+   is not in CI.) `traceId`/`spanId` are sha256-derived, so re-exporting an episode
+   is byte-identical.
 2. **Flattened dashboard feeds** — what the panels bind to via the **Infinity**
    datasource (reads JSON files/HTTP, no backend, no collector). Built by
    `plumbline.observability.feed`: `episode_telemetry` (per-seam / per-tick rollups),

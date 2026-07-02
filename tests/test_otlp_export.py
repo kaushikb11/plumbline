@@ -60,6 +60,10 @@ def test_any_value_typing() -> None:
     assert _any_value(5) == {"intValue": "5"}  # 64-bit ints are strings in proto3 JSON
     assert _any_value(1.5) == {"doubleValue": 1.5}
     assert _any_value("x") == {"stringValue": "x"}
+    # None/list/dict fall back to a stringified value (valid OTLP, never a crash).
+    assert _any_value(None) == {"stringValue": "null"}
+    assert _any_value([1, 2]) == {"stringValue": "[1, 2]"}
+    assert _any_value({"a": 1}) == {"stringValue": '{"a": 1}'}
 
 
 def test_export_is_deterministic() -> None:
@@ -72,7 +76,7 @@ def test_span_duration_matches_latency() -> None:
     event = _episode().events[0]
     span: Any = event_to_otlp_span(event)
     duration = int(span["endTimeUnixNano"]) - int(span["startTimeUnixNano"])
-    assert duration == round(event.latency_ms * 1e6)
+    assert duration == int(event.latency_ms * 1e6)  # mirror the implementation's truncation
 
 
 def test_token_attributes_only_when_usage_recorded() -> None:

@@ -30,7 +30,15 @@ def _all_keys(obj: JSONValue) -> set[str]:
     return keys
 
 
-def _sample_allowed_fields() -> set[str]:
+# Which feed(s) each dashboard binds to — its selectors are checked against ONLY
+# these, so a telemetry panel cannot reference a gate-only field (or vice versa).
+_DASHBOARD_FEEDS = {
+    "plumbline-telemetry.json": ("telemetry",),
+    "plumbline-regression.json": ("gate", "baseline"),
+}
+
+
+def _feed_keys() -> dict[str, set[str]]:
     request = Payload(inline={"m": 0})
 
     def event(seq: int, seam: Seam, response: JSONValue) -> SeamEvent:
@@ -73,11 +81,11 @@ def _sample_allowed_fields() -> set[str]:
         ),
     )
     comparison = BaselineComparison(verdicts=(MonitorVerdict("plumbline-behavior", False, "d"),))
-    return (
-        _all_keys(episode_telemetry(episode))
-        | _all_keys(gate_feed(gate_result))
-        | _all_keys(baseline_feed(comparison))
-    )
+    return {
+        "telemetry": _all_keys(episode_telemetry(episode)),
+        "gate": _all_keys(gate_feed(gate_result)),
+        "baseline": _all_keys(baseline_feed(comparison)),
+    }
 
 
 def _selectors(obj: JSONValue) -> list[str]:
@@ -112,9 +120,17 @@ def test_dashboards_parse_and_have_structure() -> None:
 
 
 def test_dashboards_reference_only_real_feed_fields() -> None:
-    allowed = _sample_allowed_fields()
+    feed_keys = _feed_keys()
     for path in _dashboards():
+        assert path.name in _DASHBOARD_FEEDS, f"{path.name}: add it to _DASHBOARD_FEEDS"
+        allowed: set[str] = set()
+        for feed_name in _DASHBOARD_FEEDS[path.name]:
+            allowed |= feed_keys[feed_name]
         dashboard: JSONValue = json.loads(path.read_text(encoding="utf-8"))
         for selector in _selectors(dashboard):
-            leaf = selector.split(".")[-1]
-            assert leaf in allowed, f"{path.name}: selector {selector!r} is not a feed field"
+            # Validate EVERY path segment against ONLY the feed(s) this dashboard binds
+            # to — a wrong parent path or a cross-feed field name fails CI.
+            for segment in selector.split("."):
+                assert segment in allowed, (
+                    f"{path.name}: selector {selector!r} references {segment!r}, not a feed field"
+                )
