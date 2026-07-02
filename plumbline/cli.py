@@ -1,6 +1,10 @@
 """Plumbline CLI (engineering spec §11).
 
 Subcommands:
+  record  — run the recording proxy server: point the runtime's base URL at it; it
+            forwards to the real provider and captures each call (§4.2).
+  replay  — run the replaying proxy server: serves recorded responses by digest,
+            never hitting upstream, so the runtime re-drives deterministically (§4.2).
   gate    — CI for robot behavior: counterfactual-replay golden episodes under a
             candidate config and fail on behavioral drift (§8.4).
   diff    — trace-diff two recorded episodes: show where and at which seam they
@@ -8,9 +12,14 @@ Subcommands:
   scenes  — author a scenes.json for the Experiment-C leaderboard from a folder of
             images + labels (§4, §7.6).
 
+    plumbline record --upstream https://api.openai.com --store ./traces --episode ep1
+    plumbline replay --store ./traces --episode ep1
     plumbline gate   path/to/gate_config.py
     plumbline diff   EPISODE_A EPISODE_B --store ./traces
     plumbline scenes ./images labels.json -o scenes.json
+
+`record` and `replay` run an HTTP server and need uvicorn (pip install
+"plumbline[proxy]").
 
 The gate config is a Python file exposing `build() -> GateSpec`. It is Python, not
 data, because a candidate config change (a swapped captioner, an edited prompt) is
@@ -100,9 +109,64 @@ def run_scenes(image_dir: str, labels_path: str, out_path: str) -> int:
     return 0
 
 
+def _serve(app: object, host: str, port: int) -> None:  # pragma: no cover - thin uvicorn wrapper
+    import importlib
+
+    try:
+        uvicorn = importlib.import_module("uvicorn")
+    except ModuleNotFoundError as exc:
+        raise SystemExit("record/replay need uvicorn — pip install 'plumbline[proxy]'") from exc
+    uvicorn.run(app, host=host, port=port)
+
+
+def run_record(upstream: str, store_root: str, episode: str, host: str, port: int) -> int:
+    import httpx
+
+    from plumbline.core.clock import VirtualClock
+    from plumbline.core.recorder import Recorder
+    from plumbline.proxy.http import AsyncHTTPProxy
+    from plumbline.proxy.server import HttpxTransport, make_asgi_app
+
+    store = TraceStore(root=store_root)
+    proxy = AsyncHTTPProxy(
+        transport=HttpxTransport(httpx.AsyncClient()),
+        recorder=Recorder(store, VirtualClock()),
+        store=store,
+    )
+    app = make_asgi_app(proxy, upstream=upstream, episode_id=episode)
+    print(
+        f"recording {upstream} -> episode {episode!r} at {store.root} (listening on {host}:{port})"
+    )
+    _serve(app, host, port)
+    return 0
+
+
+def run_replay(store_root: str, episode: str, host: str, port: int) -> int:
+    from plumbline.proxy.server import make_replay_asgi_app
+
+    store = TraceStore(root=store_root)
+    app = make_replay_asgi_app(store, episode_id=episode)
+    print(f"replaying episode {episode!r} from {store.root} (listening on {host}:{port})")
+    _serve(app, host, port)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="plumbline", description="Plumbline CLI (§11)")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    record_parser = subparsers.add_parser("record", help="Run the recording proxy server (§4.2)")
+    record_parser.add_argument("--upstream", required=True, help="Real provider base URL")
+    record_parser.add_argument("--store", required=True, help="TraceStore root directory")
+    record_parser.add_argument("--episode", required=True, help="Episode id to record into")
+    record_parser.add_argument("--host", default="127.0.0.1")
+    record_parser.add_argument("--port", type=int, default=8900)
+
+    replay_parser = subparsers.add_parser("replay", help="Run the replaying proxy server (§4.2)")
+    replay_parser.add_argument("--store", required=True, help="TraceStore root directory")
+    replay_parser.add_argument("--episode", required=True, help="Episode id to serve")
+    replay_parser.add_argument("--host", default="127.0.0.1")
+    replay_parser.add_argument("--port", type=int, default=8900)
 
     gate_parser = subparsers.add_parser(
         "gate", help="Run the regression gate over golden episodes (§8)"
@@ -123,6 +187,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    if args.command == "record":
+        return run_record(args.upstream, args.store, args.episode, args.host, args.port)
+    if args.command == "replay":
+        return run_replay(args.store, args.episode, args.host, args.port)
     if args.command == "gate":
         result = run_gate(load_gate_spec(args.config))
         print(format_report(result))

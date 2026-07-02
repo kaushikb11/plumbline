@@ -45,7 +45,7 @@ Plumbline is built in vertical slices. What is implemented and tested today:
 | **WS5 OM1 adapter** (`adapters/`, `transport/`) — proxy config, Zenoh tap, seam classification, action schema, counterfactual captioner swap | ✅ implemented & tested against a *synthetic* OM1 Go2 episode. A real Gazebo recording and sim ground-truth extraction are not yet done |
 | **WS4 Gate** (`regression/`) — golden episodes, drift gate, `plumbline gate` CLI, GitHub Action | ✅ implemented & tested: the gate fails on an injected regression and passes on an unchanged config |
 | **WS4 Observability** (`observability/`) — baseline-comparison monitors (Experiment B), trace-diff viewer | ✅ monitors + trace-diff implemented & tested; Grafana dashboards not yet |
-| **CLI** (spec §11) | ✅ `gate`, `diff`, `scenes` subcommands; `record`/`replay` planned |
+| **CLI** (spec §11) | ✅ `record`, `replay`, `gate`, `diff`, `scenes` subcommands (record/replay run the proxy server; need uvicorn) |
 
 The whole test suite (92 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim.
 
@@ -85,7 +85,11 @@ Export those env vars (or set the equivalent fields in OM1's `config/*.json5`) a
 
 ### 2. Record
 
-In record mode the proxy forwards each model call to the real endpoint, captures and canonicalizes the request/response, infers the seam, emits a `SeamEvent`, and **returns the upstream response unaltered** (the zero-touch invariant). The action seam is captured by a passive Zenoh tap.
+In record mode the proxy forwards each model call to the real endpoint, captures and canonicalizes the request/response, infers the seam, emits a `SeamEvent`, and **returns the upstream response unaltered** (the zero-touch invariant). The action seam is captured by a passive Zenoh tap. Run it as a server:
+
+```bash
+plumbline record --upstream https://api.openai.com --store ./traces --episode go2-001
+```
 
 ### 3. Replay
 
@@ -108,6 +112,8 @@ result = replayer.counterfactual(
     on_divergence=DivergencePolicy.HALT,   # the default; divergence is a result, not an error
 )
 ```
+
+Or serve faithful replay so the runtime re-drives against recorded responses (no upstream): `plumbline replay --store ./traces --episode go2-001`.
 
 ### 4. Measure fidelity
 
@@ -180,7 +186,7 @@ plumbline/
   adapters/      # adapter contract, OM1 adapter, recording-session coordinator
   bench/         # captioner leaderboard, OpenAI-compatible client, scene authoring
   observability/ # baseline-comparison monitors, trace-diff viewer   (Grafana: not yet)
-  cli.py         # gate / diff / scenes subcommands
+  cli.py         # record / replay / gate / diff / scenes subcommands
 examples/        # runnable Experiment-C demo (real models via Ollama)
 tests/           # determinism, divergence, re-execution, matchers, proxy, fidelity, judge, gate, om1, cli, ...
 spec/            # the two specs — source of truth

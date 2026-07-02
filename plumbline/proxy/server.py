@@ -21,9 +21,14 @@ from typing import Any
 
 import httpx
 
+from plumbline.core.clock import VirtualClock
 from plumbline.core.interceptor import Context
+from plumbline.core.recorder import Recorder
+from plumbline.core.store import TraceStore
 from plumbline.proxy.http import AsyncHTTPProxy, HTTPRequest, HTTPResponse
 from plumbline.proxy.streaming import CapturedStream, split_sse
+
+_JSON_CONTENT_TYPE = "application/json"
 
 ASGIScope = MutableMapping[str, Any]
 ASGIMessage = MutableMapping[str, Any]
@@ -107,6 +112,58 @@ def make_asgi_app(proxy: AsyncHTTPProxy, *, upstream: str, episode_id: str) -> A
             logical_tick=_parse_tick(headers.get(_TICK_HEADER)),
         )
         await _send_response(send, await proxy.record(request, ctx))
+
+    return app
+
+
+class _NoUpstreamTransport:
+    """Placeholder transport for a replay-only server: it never forwards, because
+    replay serves recorded responses from the trace and must not hit an upstream."""
+
+    async def send(self, request: HTTPRequest) -> HTTPResponse:
+        raise RuntimeError("replay server does not forward to an upstream")
+
+
+def make_replay_asgi_app(store: TraceStore, *, episode_id: str) -> ASGIApp:
+    """Expose faithful replay as an ASGI app: point the runtime's base URL at it and
+    it serves the recorded response for each request (matched by request_digest),
+    never forwarding upstream. A request with no recorded match returns 404 — it
+    does not fabricate a response.
+    """
+    proxy = AsyncHTTPProxy(
+        transport=_NoUpstreamTransport(), recorder=Recorder(store, VirtualClock()), store=store
+    )
+
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        if scope["type"] != "http":
+            return
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope["headers"]
+        }
+        query = scope["query_string"].decode("latin-1")
+        request = HTTPRequest(
+            method=scope["method"],
+            url=scope["path"] + (f"?{query}" if query else ""),
+            headers=headers,
+            body=await _read_body(receive),
+        )
+        ctx = Context(
+            episode_id=episode_id,
+            model_id=None,
+            params={},
+            logical_tick=_parse_tick(headers.get(_TICK_HEADER)),
+        )
+        try:
+            response = await proxy.replay(request, ctx)
+        except KeyError:
+            response = HTTPResponse(
+                status=404,
+                headers={"content-type": _JSON_CONTENT_TYPE},
+                body=b'{"error":"no recorded response for this request"}',
+                stream=None,
+            )
+        await _send_response(send, response)
 
     return app
 

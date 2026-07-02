@@ -14,9 +14,10 @@ dependencies = []
 
 [project.optional-dependencies]
 # The core substrate is dependency-free. The recording HTTP proxy server needs an
-# async HTTP client; httpx is justified for the I/O-bound proxy (spec §4.2) and is
-# opt-in so `pip install plumbline` stays light.
-proxy = ["httpx>=0.27"]
+# async HTTP client (httpx) and, for `plumbline record`/`replay`, an ASGI server
+# (uvicorn); both are justified for the I/O-bound proxy (spec §4.2) and opt-in so
+# `pip install plumbline` stays light.
+proxy = ["httpx>=0.27", "uvicorn>=0.30"]
 # The Zenoh bus tap. The shim (plumbline.transport.zenoh_shim) imports no zenoh —
 # it duck-types a session the caller opens — so this extra is purely to install the
 # real client for that caller. Pin/verify against your OM1 build (the API churns).
