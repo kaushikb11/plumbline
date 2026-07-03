@@ -39,11 +39,35 @@ _CAPTION_B_INCOMPAT: Mapping[str, str] = {
     "person_left": "empty quiet room with plain walls and nothing else present nearby",
     "owner_waving": "open space everywhere, no people and no obstacles whatsoever around",
 }
+# Real G1 decisions: tool calls with an {"action": ...} argument (no locomotion).
 _ACTION: Mapping[str, JSONValue] = {
-    "clear_ahead": {"commands": [{"type": "walk", "vx": 0.4, "vy": 0.0, "vyaw": 0.0}]},
-    "person_left": {"commands": [{"type": "turn", "vyaw": -0.3}]},
-    "owner_waving": {"commands": [{"type": "gesture", "name": "wave"}]},
+    "clear_ahead": {"name": "emotion", "action": "curious"},
+    "person_left": {"name": "robot_action", "action": "face_wave"},
+    "owner_waving": {"name": "robot_action", "action": "shake_hand"},
 }
+
+
+def _decision_response(scene: str) -> JSONValue:
+    call = _ACTION[scene]
+    assert isinstance(call, dict)
+    return {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "t0",
+                            "type": "function",
+                            "function": {
+                                "name": call["name"],
+                                "arguments": json.dumps({"action": call["action"]}),
+                            },
+                        }
+                    ]
+                }
+            }
+        ]
+    }
 
 
 def _vision_request(scene: str) -> JSONValue:
@@ -117,6 +141,7 @@ def _record(adapter: G1Adapter, store: TraceStore) -> str:
             )
         )
         cortex_req = Payload(inline=fused)
+        decision = _decision_response(scene)
         recorder.record(
             _event(
                 episode_id,
@@ -124,18 +149,16 @@ def _record(adapter: G1Adapter, store: TraceStore) -> str:
                 adapter.seam_of(cortex_req, _ENDPOINT),
                 tick,
                 cortex_req,
-                Payload(inline={"choices": [{"message": {"content": json.dumps(_ACTION[scene])}}]}),
+                Payload(inline=decision),
             )
         )
-        action_req = Payload(inline=_ACTION[scene])
         recorder.record(
-            _event(
-                episode_id,
-                next(seq),
-                Seam.DECIDE_TO_ACT,
-                tick,
-                action_req,
-                Payload(inline={"executed": True}),
+            adapter.reconstruct_decide_to_act(
+                episode_id=episode_id,
+                seq=next(seq),
+                logical_tick=tick,
+                decision_response=Payload(inline=decision),
+                wall_ts=float(tick),
             )
         )
     recorder.close_episode(episode_id)

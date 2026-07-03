@@ -141,18 +141,20 @@ def _serve(app: object, host: str, port: int) -> None:  # pragma: no cover - thi
 
 
 def _build_adapter(name: str) -> "ReconstructingAdapter":
+    from plumbline.adapters.g1 import G1Adapter
     from plumbline.adapters.generic import GenericAgentAdapter
     from plumbline.adapters.om1 import OM1Adapter
     from plumbline.recording import ReconstructingAdapter
 
-    # Adapters with BOTH reconstruct_* hooks (G1's action schema is a placeholder and
-    # has no reconstruct_decide_to_act yet, so it can't back the coordinator).
+    # Adapters with BOTH reconstruct_* hooks (all three, since the G1 adapter was
+    # rebuilt on OM1's real source and gained reconstruct_decide_to_act).
     builders: dict[str, ReconstructingAdapter] = {
         "om1": OM1Adapter(proxy_base_url=""),
+        "g1": G1Adapter(proxy_base_url=""),
         "generic": GenericAgentAdapter(proxy_base_url=""),
     }
     if name not in builders:
-        raise ValueError(f"unknown adapter {name!r}; choose om1 or generic")
+        raise ValueError(f"unknown adapter {name!r}; choose om1, g1, or generic")
     return builders[name]
 
 
@@ -214,7 +216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     record_parser.add_argument("--port", type=int, default=8900)
     record_parser.add_argument(
         "--adapter",
-        choices=("om1", "generic"),
+        choices=("om1", "g1", "generic"),
         default=None,
         help="Reconstruct a full four-seam episode via this adapter (else model seams only)",
     )
