@@ -131,3 +131,37 @@ def test_default_decision_label_shapes() -> None:
     assert default_decision_label(text) == "just text"
     bare = Payload(inline={"anything": 1})
     assert default_decision_label(bare) == '{"anything":1}'
+
+
+def _scripted_post(actions: "list[str]") -> Callable[[Payload], Payload]:
+    it = iter(actions)
+
+    def post(request: Payload) -> Payload:
+        return _tool_response(next(it))
+
+    return post
+
+
+def test_sigma_and_numerator_measured_at_the_same_golden_size() -> None:
+    # Math-review F1: sigma comes from M//2 split-halves, so the numerator's golden
+    # distribution must also be an M//2 half — comparing the FULL pool against the
+    # candidate while sigma came from halves inflates the floor ~sqrt(2)
+    # (decision.py's own 2N argument) and under-reports real drift.
+    #
+    # Deterministic knife-edge pin: pool = 24 forwards / 8 stand (75%), candidate =
+    # 11 forwards / 5 stand (69%). The pre-F1 construction computed div=0.0625
+    # against sigma=0.1172 -> excess exactly 0.0 (real drift swallowed); the
+    # size-matched construction flags it.
+    store = TraceStore()
+    _record_episode(store, ticks=1)  # one original "move forwards"
+    sample_recorded_decisions(
+        store, EPISODE, _scripted_post(["move forwards"] * 23 + ["stand still"] * 8), n=31
+    )
+    candidate = [_tool_response("move forwards")] * 11 + [_tool_response("stand still")] * 5
+
+    drift = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=candidate)
+    assert drift.excess > 0.0  # the pre-F1 construction returned exactly 0.0 here
+
+    # And a same-distribution candidate stays under the floor (no false positive).
+    same = [_tool_response("move forwards")] * 12 + [_tool_response("stand still")] * 4
+    assert recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=same).excess == 0.0

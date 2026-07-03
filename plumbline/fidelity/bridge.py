@@ -18,6 +18,7 @@ judgment calls to be reviewed with the rest of the §7 math, not just tested.
 """
 
 import json
+import random
 from collections.abc import Callable, Sequence
 
 from plumbline.core.clock import VirtualClock
@@ -51,8 +52,12 @@ def default_decision_label(response: Payload) -> str:
     """Canonical label for a recorded Cortex response: the (name, arguments) list of
     its tool calls, else the message text, else the canonical inline content.
 
-    Lossless by default like `canonical_label` (§14.6): distinct decisions never
-    collapse; inject a coarser label to bin (e.g. tolerance-bucketed arguments).
+    Deliberately LOSSY on provider noise (§14.6): randomized tool-call/response ids,
+    finish_reason, and other envelope fields are dropped — a per-call random id is
+    not a decision, and binning on it would make every sample its own class and
+    saturate σ. Within the decision content itself it is lossless: distinct
+    (name, arguments) pairs never collapse. Inject a coarser label to bin further
+    (e.g. tolerance-bucketed arguments).
     """
     inline = response.inline
     if isinstance(inline, dict):
@@ -173,12 +178,28 @@ def recorded_decision_drift(
 ) -> DecisionDrift:
     """Decision divergence of a candidate (e.g. a counterfactual's responses at this
     tick) from the RECORDED decision distribution, corrected by the recorded noise
-    floor σ (§7.2): excess = max(0, div − σ). σ is the split-half self-divergence of
-    the recorded sample, so the floor reflects the recorded decider's own noise."""
-    golden_labels = recorded_labels(store, episode_id, tick, seam=seam, label_of=label_of)
-    sigma = self_divergence(golden_labels, divergence=divergence, trials=trials, seed=seed)
+    floor σ (§7.2): excess = max(0, div − σ).
+
+    σ SIZING (the decision.py:144-164 √2 argument, math-review F1): the recorded
+    pool of M labels is treated as the 2N draw. A seeded half (size M//2) estimates
+    the golden distribution for the numerator, and σ is the split-half
+    self-divergence of the FULL pool — halves of that SAME size M//2 — so the floor
+    is measured at the numerator's golden sample size. Comparing the full pool to
+    the candidate while σ came from M//2-halves would inflate the floor ~√2 and
+    under-report real drift (the flattering direction for a gate). Record
+    n = 2·N samples for size-N semantics. The candidate side's sample size is the
+    caller's, uncorrected (documented asymmetry; see docs/math-review-section7.md).
+    """
+    pool = recorded_labels(store, episode_id, tick, seam=seam, label_of=label_of)
+    half = len(pool) // 2
+    rng = random.Random(seed ^ 0x5EED)  # independent of self_divergence's partitions
+    shuffled = list(pool)
+    rng.shuffle(shuffled)
+    # Degenerate pools (M < 2) fall back to the full pool; σ is 0 there anyway.
+    numerator_golden = shuffled[:half] if half > 0 else shuffled
+    sigma = self_divergence(pool, divergence=divergence, trials=trials, seed=seed)
     div = divergence(
-        histogram(golden_labels),
+        histogram(numerator_golden),
         histogram([label_of(response) for response in candidate_responses]),
     )
     return DecisionDrift(divergence=div, sigma=sigma, excess=max(0.0, div - sigma))
