@@ -100,6 +100,22 @@ image = (
     # MaxAutoParticipantIndex=120) — required in a container where multicast is
     # unavailable and the sim spawns a dozen-plus DDS participants.
     .apt_install("ros-humble-rmw-cyclonedds-cpp")
+    # Second round of the mixed-python trap, found at RUNTIME: ament_python node
+    # scripts use `#!/usr/bin/env python3` (Modal's 3.12 -> rclpy's 3.10 pybind
+    # ext fails), and rosidl generated om_api/unitree_* Python typesupport for
+    # 3.12 despite the CMake pin. Rebuild the message packages + python nodes
+    # with `python3` RESOLVING to the system 3.10 (PATH pin beats every
+    # discovery mechanism at once); _SIM_ENV applies the same pin at runtime.
+    .run_commands(
+        # CLEAN rebuild: an incremental colcon pass reuses the cached CMake
+        # configure and keeps the 3.12-flavored generated typesupport.
+        "bash -lc 'source /opt/ros/humble/setup.bash && cd /opt/om1-sim && "
+        "rm -rf build/om_api build/unitree_api build/unitree_go build/om_path build/go2_sim "
+        "install/om_api install/unitree_api install/unitree_go install/om_path install/go2_sim "
+        "&& PATH=/usr/bin:$PATH colcon build --symlink-install "
+        "--packages-select om_api unitree_api unitree_go om_path go2_sim "
+        "--cmake-args -DPython3_EXECUTABLE=/usr/bin/python3'",
+    )
     .pip_install("eclipse-zenoh>=1.0.0", "httpx>=0.27", "uvicorn>=0.30", "websockets>=12")
     # EGL/GPU rendering for headless Gazebo sensor cameras.
     .env({"NVIDIA_DRIVER_CAPABILITIES": "all"})
@@ -113,6 +129,9 @@ app = modal.App("plumbline-gazebo-om1")
 
 _WORLD = "/opt/om1-sim/install/go2_description/share/go2_description/worlds/home_world.sdf"
 _SIM_ENV = (
+    # PATH pin first: `env python3` must resolve to the system 3.10 that ROS's
+    # compiled extensions target, not Modal's 3.12 (see the image-build note).
+    "export PATH=/usr/bin:$PATH && "
     "source /opt/ros/humble/setup.bash && source /opt/om1-sim/install/setup.bash && "
     "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp "
     "CYCLONEDDS_URI=file:///opt/om1-sim/cyclonedds/cyclonedds.xml"
@@ -127,9 +146,9 @@ _OM1_CONFIG = """{
   hertz: 1,
   name: "plumbline_gazebo",
   api_key: "openmind_free",
-  system_prompt_base: "You are a robot dog autonomously exploring a room. On EVERY response you MUST call the Move function exactly once with the action that best continues safe exploration. Vary your movements: mostly move forwards, occasionally turn left or turn right.",
-  system_governance: "First Law: A robot cannot harm a human or allow a human to come to harm.",
-  system_prompt_examples: "Example: if nothing is observed, you might call Move with 'move forwards'.",
+  system_prompt_base: "You are Bits, a curious robot dog exploring an unfamiliar building. On EVERY response you MUST call the Move function exactly once. Choose ONLY from the movement directions currently listed as safe in your observations. Policy: prefer 'move forwards' whenever it is listed as safe; when it is not, turn toward open space ('turn left' or 'turn right', whichever is listed as safe); if almost nothing is safe, choose 'move back' or 'stand still'.",
+  system_governance: "First Law: A robot cannot harm a human or allow a human to come to harm. Never choose a movement direction that is not currently listed as safe.",
+  system_prompt_examples: "Example: if 'move forwards' is not among the safe directions but 'turn left' is, call Move with 'turn left'.",
   agent_inputs: [
     { type: "UnitreeGo2Odom" },
     { type: "Paths" },
@@ -214,18 +233,70 @@ def doctor() -> None:
         raise SystemExit(1)
 
 
+@app.function(image=image, gpu="T4", timeout=15 * MINUTES)
+def probe(world: str = "maze_world") -> None:
+    """Boot ONLY the sim and interrogate the lidar->scan->om_path chain link by
+    link — the cheap diagnosis for why om/paths/r{K} might be silent."""
+    world_path = f"/opt/om1-sim/install/go2_description/share/go2_description/worlds/{world}.sdf"
+    subprocess.Popen(
+        [
+            "bash",
+            "-lc",
+            f"{_SIM_ENV} && ros2 launch go2_sim go2_launch.py gui:=false "
+            f"world:='{world_path} -s --headless-rendering'",
+        ],
+        stdout=open("/tmp/sim.log", "w"),  # noqa: SIM115
+        stderr=subprocess.STDOUT,
+    )
+    time.sleep(75)  # let controllers spawn and sensors start
+
+    for name, cmd, timeout in (
+        ("nodes", "ros2 node list", 30),
+        ("topics", "ros2 topic list", 30),
+        ("scan msg (10s)", "timeout 10 ros2 topic echo --once /scan | head -5", 20),
+        (
+            "om/paths/r100 msg (10s)",
+            "timeout 10 ros2 topic echo --once /om/paths/r100 | head -5",
+            20,
+        ),
+        ("gz topics", "timeout 10 ign topic -l | head -30", 20),
+    ):
+        code, out = _sh(f"{_SIM_ENV} && {cmd}", timeout=timeout)
+        print(f"--- {name} (exit {code}) ---\n{out[:1200]}\n")
+
+    log = Path("/tmp/sim.log").read_text()
+    for marker in ("om_path", "error", "Error", "scan"):
+        lines = [line for line in log.splitlines() if marker in line][:8]
+        print(f"--- sim.log lines containing {marker!r} ---")
+        print("\n".join(line[:200] for line in lines) or "(none)")
+
+
 @app.function(image=image, gpu="T4", timeout=30 * MINUTES, volumes={"/traces": volume})
-def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") -> str:
-    """The Tier-3 closed loop: Gazebo physics + bridge + OM1 + Plumbline record."""
+def record(
+    llm_url: str,
+    seconds: int = 240,
+    episode_id: str = "om1-gazebo-001",
+    world: str = "maze_world",
+    paths_range: str = "r100",
+) -> str:
+    """The Tier-3 closed loop: Gazebo physics + bridge + OM1 + Plumbline record.
+
+    `world` picks the go2_description world (maze_world / walled_world /
+    home_world); `paths_range` picks which of the sim's lidar-derived path
+    horizons (r50/r100/r200, cm) is relayed to OM1's bare `om/paths` key."""
     import asyncio
     import json
+    import re
     import struct
     import sys
+    from collections import Counter
 
     # A running interpreter won't see a mid-process editable install (.pth files
     # are only processed at startup) — put the mounted repo on sys.path directly;
     # its dependencies are already baked into the image.
     sys.path.insert(0, "/root/plumbline-repo")
+
+    world_path = f"/opt/om1-sim/install/go2_description/share/go2_description/worlds/{world}.sdf"
 
     # 1. Gazebo + go2_sim, headless. The launch composes gz_args from `world` +
     # " -r", so the headless server flags ride in through world:=.
@@ -234,7 +305,7 @@ def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") 
             "bash",
             "-lc",
             f"{_SIM_ENV} && ros2 launch go2_sim go2_launch.py gui:=false "
-            f"world:='{_WORLD} -s --headless-rendering'",
+            f"world:='{world_path} -s --headless-rendering'",
         ],
         stdout=open("/tmp/sim.log", "w"),  # noqa: SIM115 - long-lived process log
         stderr=subprocess.STDOUT,
@@ -347,8 +418,35 @@ def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") 
         "cmd_vel", on_cmd_vel
     )
 
-    # om/paths stub: the sim's om_path publishes range-keyed /om/paths/r{K}, NOT
-    # the bare om/paths OM1 subscribes to — reported below, stubbed all-clear here.
+    # REAL perception: relay the sim's lidar-derived path availability. om_path
+    # publishes range-keyed /om/paths/r{K} while OM1 subscribes the bare
+    # om/paths — a pure key rename, bytes untouched. The prompt's "safe movement
+    # directions" text now tracks the actual simulated lidar, so decisions are
+    # conditioned on real perception. Distinct path states are counted as the
+    # episode's perception-variety metric.
+    paths_pub = raw_session.declare_publisher("om/paths")
+    sim_paths_relayed: list[int] = []
+    path_states: Counter[str] = Counter()
+
+    def on_sim_paths(sample: "zenoh.Sample") -> None:
+        data = bytes(sample.payload)
+        sim_paths_relayed.append(len(data))
+        try:  # header(4)+stamp(8)+frame_id -> sequence<uint32> (deserializePaths)
+            pos = 12
+            flen = struct.unpack_from("<I", data, pos)[0]
+            pos += 4 + flen + (4 - (pos + flen) % 4) % 4
+            count = struct.unpack_from("<I", data, pos)[0]
+            indices = struct.unpack_from(f"<{count}I", data, pos + 4)
+            path_states[",".join(map(str, sorted(indices)))] += 1
+        except struct.error:
+            pass
+        paths_pub.put(data)  # relay raw bytes, untouched
+
+    paths_sub = raw_session.declare_subscriber(  # noqa: F841 - keep sub alive
+        f"sim/om/paths/{paths_range}", on_sim_paths
+    )
+
+    # All-clear stub: FALLBACK ONLY, if the sim publishes no paths (e.g. no /scan).
     def _cdr_paths() -> bytes:
         name = b"paths\x00"
         buf = bytearray(b"\x00\x01\x00\x00") + struct.pack("<iI", 0, 0)
@@ -357,8 +455,6 @@ def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") 
         indices = tuple(range(10))
         buf += struct.pack("<I", len(indices)) + struct.pack(f"<{len(indices)}I", *indices)
         return bytes(buf)
-
-    paths_pub = raw_session.declare_publisher("om/paths")
 
     async def run_harness() -> None:
         import httpx
@@ -399,17 +495,31 @@ def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") 
             stderr=subprocess.STDOUT,
         )
         deadline = time.time() + seconds
+        stub_grace = time.time() + 20  # give the sim's real paths time to appear
         while time.time() < deadline:
-            paths_pub.put(_cdr_paths())
+            if not sim_paths_relayed and time.time() > stub_grace:
+                paths_pub.put(_cdr_paths())  # fallback only — reported in the summary
             await asyncio.sleep(0.1)
         om1.terminate()
         server.should_exit = True
         await serve_task
 
     asyncio.run(run_harness())
-    odom_sub.undeclare()
-    tap.close()
-    coordinator.close()
+    coordinator.close()  # seal the episode on disk
+
+    # PERSIST FIRST: nothing between capture and the Volume commit may fail
+    # (learned the hard way — a hung zenoh close once discarded a full episode).
+    subprocess.run(["cp", "-r", "/tmp/traces", f"/traces/{episode_id}-store"], check=True)
+    Path(f"/traces/{episode_id}-poses.json").write_text(json.dumps(poses))
+    volume.commit()
+    print(f"trace persisted to volume: {episode_id}-store")
+
+    # Best-effort transport teardown; the container dies right after anyway.
+    for closer in (odom_sub.undeclare, cmd_vel_sub.undeclare, paths_sub.undeclare, tap.close):
+        try:
+            closer()
+        except Exception as exc:  # noqa: BLE001 - teardown must never lose the run
+            print(f"teardown (non-fatal): {type(exc).__name__}: {exc}")
 
     # 5. Verify: seam counts, observed bus keys, physical motion, faithful replay.
     episode = store.load_episode(episode_id)
@@ -437,6 +547,9 @@ def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") 
     om1_log = Path("/tmp/om1.log").read_text()
     om1_tail = om1_log[-1500:]
     ai_commands = om1_log.count('"AI command"')
+    decision_histogram = dict(
+        Counter(re.findall(r'"msg":"AI command","action":"([^"]+)"', om1_log))
+    )
     # The Move connector's gates (move.go) — which one swallowed the commands?
     connector_gates = {
         gate: om1_log.count(gate)
@@ -451,9 +564,6 @@ def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") 
         )
     }
 
-    subprocess.run(["cp", "-r", "/tmp/traces", f"/traces/{episode_id}-store"], check=True)
-    volume.commit()
-
     summary = json.dumps(
         {
             "events": len(episode.events),
@@ -461,10 +571,15 @@ def record(llm_url: str, seconds: int = 90, episode_id: str = "om1-gazebo-001") 
             "observed_bus_keys": sorted(keys),
             "faithful_replay_byte_identical": identical,
             "ai_commands": ai_commands,
+            "decision_histogram": decision_histogram,
             "connector_gates": connector_gates,
             "raw_cmd_vel_frames": len(cmd_vel_frames),
             "odom_samples": len(poses),
             "distance_traveled_m": round(moved, 3),
+            "world": world,
+            "paths_source": f"sim:{paths_range}" if sim_paths_relayed else "stub(all-clear)",
+            "sim_paths_relayed": len(sim_paths_relayed),
+            "distinct_path_states": len(path_states),
         },
         indent=2,
     )
