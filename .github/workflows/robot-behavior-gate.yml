@@ -15,6 +15,9 @@ on:
 
 env:
   GATE_CONFIG: plumbline/bench/example_gate.py
+  # The REAL golden episode: om1-gazebo-maze-003, recorded from the unmodified
+  # OM1 runtime driving a physics-simulated Go2 (docs/results-om1-gazebo.md).
+  REAL_GATE_CONFIG: bench/om1_gazebo_gate.py
 
 jobs:
   gate:
@@ -32,5 +35,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run the robot-behavior gate
+      - name: Run the robot-behavior gate (bundled example)
         run: plumbline gate "$GATE_CONFIG"
+
+      - name: Run the robot-behavior gate (REAL Gazebo golden episode)
+        run: plumbline gate "$REAL_GATE_CONFIG"

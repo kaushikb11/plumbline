@@ -58,6 +58,15 @@ and `doctor` health-checks the image's seven components — the two tools that
 made this episode a two-command reproduction instead of an afternoon of
 debugging.
 
+## This episode is the CI golden set
+
+The trace is committed at `bench/golden/` (4.2 MB — content addressing folds the
+3,789 Twist frames into 9 blobs) and `bench/om1_gazebo_gate.py` gates every pull
+request on it: byte-identical replay + zero behavioral drift on the unchanged
+config, red with `DECIDE_TO_ACT` attribution on an injected decision flip
+(`tests/test_golden_gazebo.py`; the golden content hash is pinned so the trace
+cannot be edited accidentally). "CI for robot behavior," literally.
+
 ## Honest notes
 
 - At temperature 0.7 with `tool_choice: "required"`, the decider explores gently
