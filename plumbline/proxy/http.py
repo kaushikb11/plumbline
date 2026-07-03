@@ -14,6 +14,7 @@ reconstruct the recorded HTTP response, preserving SSE chunk framing.
 """
 
 import json
+import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ from plumbline.core.replayer import DivergencePolicy
 from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
 from plumbline.core.trace import BlobKind, JSONValue, Payload, SeamEvent
-from plumbline.proxy.normalizers import DEFAULT_NORMALIZERS, Normalizer
+from plumbline.proxy.normalizers import DEFAULT_NORMALIZERS, NormalizedRequest, Normalizer
 from plumbline.proxy.recording import ProxyDivergence
 from plumbline.proxy.streaming import (
     CapturedStream,
@@ -36,6 +37,7 @@ from plumbline.proxy.streaming import (
 )
 from plumbline.proxy.tick import _TICK_OVERRIDE_KEY, TickPolicy
 
+_log = logging.getLogger("plumbline.proxy")
 _SSE_CONTENT_TYPE = "text/event-stream"
 _JSON_CONTENT_TYPE = "application/json"
 # The upstream HTTP status, stashed in the event's params so a non-200 (rate limit,
@@ -95,6 +97,25 @@ class AsyncHTTPProxy:
         response = await self._transport.send(request)  # zero-touch forward
         latency_ms = (time.perf_counter() - started) * 1000.0
 
+        # ZERO-TOUCH (CLAUDE.md invariant 4): the runtime must receive the upstream
+        # response it earned even if RECORDING fails (disk full, blob write error, a
+        # malformed body). A recording-layer fault is logged and dropped, never
+        # allowed to turn a good 200 into a 500 to the runtime.
+        try:
+            self._capture(request, response, normalizer, normalized_request, ctx, latency_ms)
+        except Exception:  # noqa: BLE001 - recording must never break the forward path
+            _log.exception("plumbline: recording failed for %s (response forwarded)", request.url)
+        return response  # the runtime receives the upstream response unaltered
+
+    def _capture(
+        self,
+        request: "HTTPRequest",
+        response: "HTTPResponse",
+        normalizer: "Normalizer",
+        normalized_request: "NormalizedRequest",
+        ctx: Context,
+        latency_ms: float,
+    ) -> None:
         if response.stream is not None:
             response_payload = stream_to_payload(response.stream, assemble_openai(response.stream))
             response_blobs: Mapping[str, bytes] = {}
@@ -143,7 +164,6 @@ class AsyncHTTPProxy:
                 latency_ms=latency_ms,
             )
         )
-        return response  # the runtime receives the upstream response unaltered
 
     async def replay(
         self,

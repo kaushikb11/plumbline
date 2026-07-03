@@ -91,7 +91,11 @@ class TraceStore:
                 request_digest=event.request_digest,
             )
         )
-        self._persist_manifest(episode_id)
+        # NOT re-persisted per event: _persist_manifest re-serializes the whole
+        # (growing) seam_index, so doing it every append is O(n^2) disk I/O on the
+        # robot's record loop. events.jsonl is append-only and authoritative;
+        # open_episode wrote an initial manifest (metadata readable mid-record) and
+        # close_episode writes the final seam index.
 
     def close_episode(self, episode_id: str) -> None:
         self._persist_manifest(episode_id)
@@ -114,9 +118,19 @@ class TraceStore:
         manifest = self.load_manifest(episode_id)
         events_path = self._episode_dir(episode_id) / "events.jsonl"
         events: list[SeamEvent] = []
-        for line in events_path.read_text(encoding="utf-8").splitlines():
-            if line:
+        lines = events_path.read_text(encoding="utf-8").splitlines()
+        for lineno, line in enumerate(lines, start=1):
+            if not line:
+                continue
+            try:
                 events.append(_event_from_json(_loads(line)))
+            except (ValueError, KeyError, TypeError) as exc:
+                # A corrupt/truncated line is a trace-integrity failure, NOT a thing
+                # to silently skip (dropping a recorded event is fabrication-adjacent).
+                # Fail loudly and locate it, rather than emit a raw mid-iteration error.
+                raise ValueError(
+                    f"episode {episode_id!r}: corrupt event at events.jsonl line {lineno}: {exc}"
+                ) from exc
         events.sort(key=lambda e: e.seq)
         return Episode(episode_id=episode_id, events=tuple(events), metadata=manifest.metadata)
 

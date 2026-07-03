@@ -16,6 +16,7 @@ serve the recorded response. On a counterfactual miss, apply the DivergencePolic
 invariant 5, §6).
 """
 
+import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -28,6 +29,8 @@ from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
 from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
 from plumbline.proxy.normalizers import contains_image
+
+_log = logging.getLogger("plumbline.proxy")
 
 UpstreamFn = Callable[[Payload], Payload]
 SeamClassifier = Callable[[Payload, Context], Seam]
@@ -51,8 +54,12 @@ class ProxyDivergence(Exception):
     """Raised on a halted counterfactual replay (§6.4): the live request no
     longer matches the recording, so no recorded response is served."""
 
-    def __init__(self, seam: Seam, distance: float, request_digest: str) -> None:
-        super().__init__(f"counterfactual divergence at {seam.value} (distance {distance:.4f})")
+    def __init__(
+        self, seam: Seam, distance: float, request_digest: str, detail: str | None = None
+    ) -> None:
+        super().__init__(
+            detail or f"counterfactual divergence at {seam.value} (distance {distance:.4f})"
+        )
         self.seam = seam
         self.distance = distance
         self.request_digest = request_digest
@@ -76,22 +83,28 @@ class RecordingProxy:
         response = self.upstream(request)  # zero-touch: forward and return unaltered
         latency_ms = (time.perf_counter() - started) * 1000.0
 
-        seq = self._seq[ctx.episode_id]
-        self._seq[ctx.episode_id] = seq + 1
-        event = SeamEvent(
-            episode_id=ctx.episode_id,
-            seq=seq,  # monotonic call order
-            seam=self.classifier(request, ctx),
-            logical_tick=ctx.logical_tick,  # loop-iteration index from the loop driver (§6)
-            wall_ts=time.time(),
-            request=request,
-            response=response,
-            model_id=ctx.model_id,
-            params=ctx.params,
-            request_digest=self.digest(request),
-            latency_ms=latency_ms,
-        )
-        self.recorder.record(event)
+        # Zero-touch (invariant 4): a recording fault must never alter the response
+        # the runtime receives — log and drop, then return the upstream response.
+        try:
+            seq = self._seq[ctx.episode_id]
+            self._seq[ctx.episode_id] = seq + 1
+            self.recorder.record(
+                SeamEvent(
+                    episode_id=ctx.episode_id,
+                    seq=seq,  # monotonic call order
+                    seam=self.classifier(request, ctx),
+                    logical_tick=ctx.logical_tick,  # loop-iteration index (§6)
+                    wall_ts=time.time(),
+                    request=request,
+                    response=response,
+                    model_id=ctx.model_id,
+                    params=ctx.params,
+                    request_digest=self.digest(request),
+                    latency_ms=latency_ms,
+                )
+            )
+        except Exception:  # noqa: BLE001 - recording must never break the forward path
+            _log.exception("plumbline: recording failed (response forwarded)")
         return response
 
     def close(self, episode_id: str) -> None:
@@ -168,3 +181,33 @@ class ReplayingProxy:
         if live is None:
             raise ProxyDivergence(seam, verdict.distance, recorded.request_digest)
         return live(request)
+
+    def unconsumed(self) -> tuple[SeamEvent, ...]:
+        """Recorded events never served during faithful replay — the UNDER-consumption
+        signal. `faithful` flags OVER-consumption loudly (an extra call raises), but a
+        runtime that issues FEWER calls than recorded (skips a seam, exits a tick
+        early) would otherwise report success while the action sequence silently
+        diverged. Call this at end of replay; a non-empty result is a divergence.
+
+        Faithful serving advances a per-digest cursor, so leftovers are the events at
+        or past each digest's cursor. (Counterfactual serving uses the per-seam
+        cursor; both are reported.)"""
+        leftover: list[SeamEvent] = []
+        for digest, events in self._by_digest.items():
+            leftover.extend(events[self._digest_cursor.get(digest, 0) :])
+        return tuple(sorted(leftover, key=lambda e: e.seq))
+
+    def verify_fully_consumed(self) -> None:
+        """Raise if any recorded event went unserved (under-consumption divergence)."""
+        leftover = self.unconsumed()
+        if leftover:
+            seams = ", ".join(sorted({e.seam.value for e in leftover}))
+            raise ProxyDivergence(
+                leftover[0].seam,
+                float(len(leftover)),
+                leftover[0].request_digest,
+                detail=(
+                    f"{len(leftover)} recorded event(s) never replayed (seams: {seams}) — "
+                    "the runtime issued fewer calls than recorded"
+                ),
+            )
