@@ -12,7 +12,7 @@ Plumbline is a standalone, runtime-agnostic library that fixes all three:
 
 1. **Reproducibility** — a deterministic record-replay substrate that captures nondeterministic model calls at the four seams of the perception-to-action loop and replays them, reproducing a runtime's decision/action sequence despite nondeterministic models (for HTTP model I/O; see [Scope & limitations](docs/limitations.md)).
 2. **Fidelity measurement** — metrics that quantify information loss across the *caption* and *fuse* boundaries, scored on downstream robot **decision** divergence, corrected for the decision-maker's own sampling noise. Meaningful as a ranking / regression delta within one fixed harness.
-3. **Regression testing** — a gate that catches drift that latency dashboards and text-level tracers cannot see. (Today it gates trace-reproducibility + surface divergence; anchoring it to decision divergence is on the roadmap — see [Scope & limitations](docs/limitations.md).)
+3. **Regression testing** — a gate that catches drift that latency dashboards and text-level tracers cannot see. It gates trace-reproducibility + surface divergence by default, and (opt-in, with a decider) scores **decision divergence** anchored to the noise floor — catching low-surface decision flips the surface path misses. See [Scope & limitations](docs/limitations.md).
 
 > **Honest scope.** The integrated record → counterfactual → gate journey now flows on the recorder's own output (auto-ticked four-seam episodes), and the gate can score decision divergence anchored to the noise floor. What remains is a **real OM1 + Gazebo recording** (needs Ubuntu+ROS2+Gazebo) plus thin glue. [docs/limitations.md](docs/limitations.md) is the straight map of what works, what's scoped, and what isn't built — read it before assuming a headline capability.
 
@@ -77,15 +77,11 @@ The operator flow is: **point your runtime's base URLs at the proxy → record �
 from plumbline.adapters.om1 import OM1Adapter
 
 cfg = OM1Adapter(proxy_base_url="http://localhost:8900").configure_proxy()
-cfg.env
-# {'OPENAI_BASE_URL': 'http://localhost:8900/v1',
-#  'OPENAI_API_BASE': 'http://localhost:8900/v1',
-#  'ANTHROPIC_BASE_URL': 'http://localhost:8900',
-#  'GEMINI_API_BASE': 'http://localhost:8900',
-#  'OLLAMA_HOST': 'http://localhost:8900', ...}
+cfg.config_fields
+# {'cortex_llm.config.base_url': 'http://localhost:8900/v1'}
 ```
 
-Export those env vars (or set the equivalent fields in OM1's `config/*.json5`) and the runtime's provider clients talk to Plumbline instead of the cloud. No OM1 source changes.
+Set those fields in OM1's `config/*.json5` (verified against OM1's source — OM1 routes model calls through `cortex_llm.config.base_url`, not per-provider env vars; see [docs/om1-integration.md](docs/om1-integration.md)) and the runtime's model calls go through Plumbline instead of the cloud. No OM1 source changes.
 
 ### 2. Record
 
