@@ -59,6 +59,8 @@ Plumbline's fidelity metric, run **end-to-end on real models** (a real VLM + a r
 
 Full numbers, honest noise caveats, and the reproducible script are in **[docs/results-experiment-c.md](docs/results-experiment-c.md)** (`python examples/experiment_c.py`).
 
+**Experiment B on a real OM1 episode** (`python examples/experiment_b_om1.py`): golden = the real OM1 Go binary's recorded SIL episode (45× *move forwards*); one innocuous-looking governance rule appended and counterfactually re-executed against the live Cortex model flips **every** decision to *move back*. OM1's latency monitor and a generic OTel-GenAI tracer stay **green**; Plumbline's gate goes **red** with the divergence attributed to the `DECIDE_TO_ACT` seam, while the unchanged config passes the same gate. *Existing observability says fine, Plumbline says broken, the robot was in fact broken* — on real components, not fixtures: **[docs/results-experiment-b-om1.md](docs/results-experiment-b-om1.md)**.
+
 **Experiment A** (`python examples/experiment_a.py`) makes the same point *within* one caption: a surface text-similarity metric (`token_dice`) is **blind to which word carries the decision** — two captions degraded to *identical* surface similarity can have *opposite* decision fidelity. (The size of the gap depends on caption structure and the degradation knob, so it's a demonstration of the blindness, not a universal constant — see [`docs`/the module docstring](plumbline/bench/verbosity.py).)
 
 ## Install

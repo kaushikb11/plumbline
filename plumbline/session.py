@@ -151,21 +151,30 @@ class RecordingSession(Recorder):
         if sample.raw is not None:
             blobs = (self._store.put_blob(sample.raw, BlobKind.BIN),)
         request = Payload(inline=sample.payload, blobs=blobs)
-        self.record(
-            SeamEvent(
-                episode_id=self._episode_id,
-                seq=0,  # reassigned by record()
-                seam=seam,
-                logical_tick=self._tick,
-                wall_ts=sample.wall_ts,
-                request=request,
-                response=request,  # the bus message is the action as issued
-                model_id=None,
-                # The originating bus key, in non-digested params: which key a
-                # sample arrived on is attribution (e.g. pinning the real cmd_vel
-                # key from a recorded episode), not payload identity.
-                params={"plumbline.bus_key": sample.key_expr},
-                request_digest=canonicalize(request).digest,
-                latency_ms=0.0,
+        # Tick and seq are stamped under ONE lock acquisition: reading the tick
+        # outside it lets a tap-thread sample that raced a set_tick land with a
+        # stale tick LATER in seq order, and the replayer's tick grouping then
+        # reorders the episode (found on a real OM1 recording: 3 of 1,803 bus
+        # frames carried tick N after tick N+1 was already recorded).
+        with self._lock:
+            if self._closed or not self._opened:
+                return  # same drop-don't-raise boundary rule as record()
+            Recorder.record(
+                self,
+                SeamEvent(
+                    episode_id=self._episode_id,
+                    seq=next(self._seq),
+                    seam=seam,
+                    logical_tick=self._tick,
+                    wall_ts=sample.wall_ts,
+                    request=request,
+                    response=request,  # the bus message is the action as issued
+                    model_id=None,
+                    # The originating bus key, in non-digested params: which key a
+                    # sample arrived on is attribution (e.g. pinning the real cmd_vel
+                    # key from a recorded episode), not payload identity.
+                    params={"plumbline.bus_key": sample.key_expr},
+                    request_digest=canonicalize(request).digest,
+                    latency_ms=0.0,
+                ),
             )
-        )

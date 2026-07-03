@@ -203,3 +203,19 @@ def test_om1_tap_decodes_cmd_vel_twist_and_keeps_raw_bytes() -> None:
     assert isinstance(inline, dict) and "geometry_msgs/Twist" in inline
     assert event.params["plumbline.bus_key"] == "cmd_vel"
     assert event.request.blobs and store.get_blob(event.request.blobs[0]) == raw
+
+
+def test_bus_sample_tick_stamped_at_record_time_under_the_lock() -> None:
+    # Tick and seq are assigned under one lock acquisition, so ticks are monotone
+    # in seq order by construction (found on a real OM1 recording: a tap-thread
+    # sample raced set_tick and landed with a stale tick later in seq order).
+    store = TraceStore()
+    session = RecordingSession(store, episode_id="ep", metadata={})
+    session.open()
+    session.set_tick(4)
+    session.record_bus_sample(_bus_sample())
+    session.set_tick(5)
+    session.record_bus_sample(_bus_sample())
+    session.close()
+    events = store.load_episode("ep").events
+    assert [(e.seq, e.logical_tick) for e in events] == [(0, 4), (1, 5)]
