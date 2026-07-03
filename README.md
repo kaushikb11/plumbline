@@ -14,7 +14,7 @@ Plumbline is a standalone, runtime-agnostic library that fixes all three:
 2. **Fidelity measurement** — metrics that quantify information loss across the *caption* and *fuse* boundaries, scored on downstream robot **decision** divergence, corrected for the decision-maker's own sampling noise. Meaningful as a ranking / regression delta within one fixed harness.
 3. **Regression testing** — a gate that catches drift that latency dashboards and text-level tracers cannot see. (Today it gates trace-reproducibility + surface divergence; anchoring it to decision divergence is on the roadmap — see [Scope & limitations](docs/limitations.md).)
 
-> **Honest scope.** These three pillars work individually; the *integrated* record → counterfactual → gate journey against a real out-of-process runtime is a validated design, not yet a shipped end-to-end system. [docs/limitations.md](docs/limitations.md) is the straight map of what works, what's scoped, and what isn't built — read it before assuming a headline capability.
+> **Honest scope.** The integrated record → counterfactual → gate journey now flows on the recorder's own output (auto-ticked four-seam episodes), and the gate can score decision divergence anchored to the noise floor. What remains is a **real OM1 + Gazebo recording** (needs Ubuntu+ROS2+Gazebo) plus thin glue. [docs/limitations.md](docs/limitations.md) is the straight map of what works, what's scoped, and what isn't built — read it before assuming a headline capability.
 
 OM1 is the flagship reference integration.
 
@@ -49,7 +49,7 @@ Plumbline is built in vertical slices. What is implemented and tested today:
 | **WS4 Observability** (`observability/`) — baseline-comparison monitors (Experiment B), trace-diff viewer, **Grafana dashboards + a dependency-free OTLP/feed exporter** | ✅ implemented & tested — see [docs/observability.md](docs/observability.md) |
 | **CLI** (spec §11) | ✅ `record`, `replay`, `gate`, `diff`, `scenes`, `export` subcommands (record/replay run the proxy server; need uvicorn) |
 
-The whole test suite (169 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim — see **[docs/limitations.md](docs/limitations.md)** for the full soundness audit (what works, what's scoped, what isn't built yet).
+The whole test suite (187 tests) is green under `mypy --strict`, `ruff` clean, with a dependency-free core. This honesty about what is and isn't built is the point: a tool that detects overclaiming should not overclaim — see **[docs/limitations.md](docs/limitations.md)** for the full soundness audit (what works, what's scoped, what isn't built yet).
 
 ## Results
 

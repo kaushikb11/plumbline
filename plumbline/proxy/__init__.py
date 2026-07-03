@@ -42,12 +42,17 @@ from plumbline.proxy.streaming import (
     stream_to_payload,
 )
 from plumbline.proxy.tick import BoundaryTickPolicy, TickPolicy
+from plumbline.proxy.ws import AsyncWSProxy, WsConnection, WsFrame, WsTransport
 
 __all__ = [
     "DEFAULT_NORMALIZERS",
     "AnthropicMessagesNormalizer",
+    "AsyncWSProxy",
     "BoundaryTickPolicy",
     "TickPolicy",
+    "WsConnection",
+    "WsFrame",
+    "WsTransport",
     "AsyncHTTPProxy",
     "AsyncTransport",
     "CapturedStream",

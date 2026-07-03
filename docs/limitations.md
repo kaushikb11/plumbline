@@ -39,55 +39,57 @@ before assuming a headline capability.
   swapped seam's live-vs-recorded output with a matcher; it does NOT re-run the fuser
   or decider. Multi-seam frontiers raise `NotImplementedError`.
 
-## Known gaps — would NOT work today, and what closing each needs
+## Gaps closed (the four red items are now addressed)
 
-1. **OM1 reference-config perception capture (RTSP/WebSocket).** OM1's default VLM/ASR
-   (`VLMGeminiRTSP`, `GoogleASRInput`) move data over RTSP + WebSocket
-   (`wss://api.openmind.com`), which the HTTP-only proxy cannot see — so
-   `SENSOR_TO_CAPTION`, the caption bottleneck this project exists to measure, is not
-   capturable for the reference config. `FUSE_TO_DECIDE` (the Cortex OpenMind-portal
-   call) IS HTTP-capturable. **Needs:** a WebSocket-aware tap + RTSP handling.
-   HTTP-based perception endpoints (OpenAI-compatible vision) work today.
-2. **Tick structure for an out-of-process runtime.** `logical_tick` is read from the
-   `x-plumbline-tick` request header, which no provider SDK / the OM1 Go binary sends
-   → every event lands at tick 0, collapsing the per-tick grouping the
-   counterfactual/gate rely on. The in-process `RecordingSession.set_tick` works for a
-   Python driver loop; bridging an external runtime's loop index has no shipped
-   mechanism. **Needs:** a tick source (session driver, a per-request header shim, or
-   heuristic tick boundaries).
-3. **The integrated record → counterfactual → gate journey.** The zero-touch HTTP
-   recorder captures only the model seams it sees per call; it does not reconstruct
-   `CAPTION_TO_FUSE`, capture `DECIDE_TO_ACT`, or tap Zenoh. The counterfactual/gate
-   are validated on hand-built in-process fixtures, not on episodes the zero-touch
-   flow itself produces. **Needs:** `RecordingSession` + the Zenoh tap + `reconstruct_*`
-   wired into one recording path with a tick source.
-4. **The gate scores reproducibility + surface divergence, not full behavior.** Its
-   divergence detection uses surface caption similarity (a matcher + halt), which can
-   (a) cry wolf on benign rephrasings that halt-truncate and (b) MISS a
-   low-surface-distance decision flip (drop the one token that matters → served old
-   decision → green) — the dangerous direction, and exactly the flagship scenario. The
-   decision-divergence machinery (the fidelity metric) is not wired into the gate, and
-   `drift_threshold` is a free float, not anchored to the noise floor σ. **Needs:**
-   scoring drift via decision divergence (a decider re-drive) with a σ-anchored
-   threshold, and making a tolerant `ActionSchemaMatcher` (with reorder tolerance) the
-   default instead of `ExactMatcher`.
-5. **Fidelity is not wired to recorded seams.** `caption_loss`/`fusion_loss` take a
-   live decider callable, not replayed `SeamEvent`s; "measure fidelity on the recorded
-   seams" is not yet a code path. **Needs:** a bridge from replayed `FUSE_TO_DECIDE`
-   seams into the metrics.
-6. **Physical-action capture is lossy.** The Zenoh tap stores the binary CDR `Twist`
-   via `utf-8`-`replace`, not a content-addressed blob; the `DECIDE_TO_ACT` comparison
-   rests on the reconstructed tool call, not the bus bytes.
-7. **The OM1 adapter is verified against OM1's source, not a running episode** (WS5
-   definition-of-done unmet); three interface facts stay `UNVERIFIED` pending a real
-   recording (see [om1-integration.md](om1-integration.md)).
+1. **WebSocket caption capture — CORE CLOSED (residual: RTSP + ASGI wrapper).**
+   `proxy/ws.py` (`AsyncWSProxy` + injected `WsTransport`/`WsConnection`) captures OM1's
+   WS caption/transcript RESULT stream: each inbound frame is a `SENSOR_TO_CAPTION`
+   event, faithfully replayable in seq order, relayed zero-touch, binary via the blob
+   path (no pickle), tested with fakes. **Residual (still open):** the ASGI
+   websocket-scope server wrapper + a concrete `websockets` transport (thin deployment
+   glue), and the RTSP video *upload* (`VLMGeminiRTSP` media ingest — a separate media
+   transport, not a text-result stream).
+2. **Tick source — CLOSED.** `proxy/tick.py::BoundaryTickPolicy` auto-advances
+   `logical_tick` on the perception-boundary seam, so an out-of-process runtime needs no
+   header; the header stays as an explicit override. Wired into `AsyncHTTPProxy` and the
+   `record` CLI.
+3. **Integrated record → counterfactual → gate — CLOSED.** `plumbline/recording.py::
+   RecordingCoordinator` reconstructs `CAPTION_TO_FUSE` + `DECIDE_TO_ACT` around each
+   Cortex call into a full four-seam episode; `tests/test_integrated_recording.py` runs
+   `counterfactual` + `gate` on the recorder's OWN output (no hand-built fixtures).
+4. **Decision-anchored gate — CLOSED (opt-in).** `regression.DecisionGate` scores drift
+   as decision-distribution divergence corrected by the noise floor σ (reusing the
+   reviewed fidelity math), failing iff excess > k·σ — CATCHING a low-surface decision
+   flip the surface gate misses (flagship test) and NOT flagging a benign rephrasing.
+   `recommended_behavior_matcher` (typed, numeric-tolerant, reorder-insensitive) is the
+   recommended `behavior_matcher`. **Scope:** it runs the *supplied* decider on the
+   counterfactual caption — it does NOT re-run a stateful fuser / the recorded Cortex
+   (that still needs a runtime re-drive); the surface/structural path stays the default
+   when no decider is supplied.
+
+## Still open
+
+- **Gap 1 residual:** the RTSP video upload and the ASGI websocket server wrapper (above).
+- **Fidelity not wired to *recorded* seams.** `caption_loss`/`decision_drift` take a
+  live decider; the decision gate runs a supplied decider on the counterfactual caption
+  rather than replaying recorded `FUSE_TO_DECIDE` seams. A bridge from replayed decision
+  seams into the metrics is not built.
+- **Physical-action capture is lossy.** The Zenoh tap stores the binary CDR `Twist` via
+  `utf-8`-`replace`, not a content-addressed blob; the `DECIDE_TO_ACT` comparison rests
+  on the reconstructed tool call, not the bus bytes.
+- **The OM1 adapter is verified against OM1's source, not a running episode** (WS5
+  definition-of-done unmet; needs Ubuntu+ROS2+Gazebo); three interface facts stay
+  `UNVERIFIED` (see [om1-integration.md](om1-integration.md)).
 
 ## Net
 
 Faithful replay of HTTP model calls and comparative fidelity ranking are real and
-usable today. The differentiated integrated claim — record a real robot run and gate
-its *behavior* in CI — is a validated design on synthetic fixtures, not yet a working
-end-to-end system against a real out-of-process runtime. The single biggest gap:
-nothing has yet flowed record → counterfactual → gate from the zero-touch recorder's
-own output. Closing gaps 1–4 (WebSocket capture, a tick source, wired recording, a
-decision-anchored gate) is what turns the design into a system.
+usable today. The four red gaps are now addressed: the integrated **record →
+counterfactual → gate** journey flows on the recorder's own output (auto-ticked,
+four-seam episodes), the gate can score **decision divergence** anchored to the noise
+floor (catching the low-surface flips the surface path missed), and the WS caption
+stream is capturable. What remains is genuinely external or thin-glue: a **real OM1 +
+Gazebo recording** (needs Ubuntu+ROS2+Gazebo — the one thing that upgrades the OM1
+adapter from source-verified to run-verified), the ASGI websocket server wrapper +
+RTSP upload, faithful-CDR bus capture, and wiring fidelity onto replayed seams. The
+system is now demonstrable end-to-end in-process; the last mile is a real robot run.
