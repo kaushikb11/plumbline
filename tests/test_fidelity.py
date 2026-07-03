@@ -118,3 +118,22 @@ def test_decision_drift_flip_and_preserved() -> None:
     preserved = decision_drift(_probe, "obstacle ahead", "an obstacle just ahead", 16)
     assert preserved.divergence == 0.0
     assert preserved.excess == 0.0
+
+
+def test_sampling_and_weights_are_validated() -> None:
+    # n < 1 would silently report perfect fidelity from zero evidence; non-finite /
+    # negative fusion weights would poison the sum. Both must fail loudly (review).
+    import math
+
+    import pytest
+    from plumbline.fidelity import caption_loss, fusion_loss
+    from plumbline.fidelity.decision import sample_labels
+
+    with pytest.raises(ValueError, match="n >= 1"):
+        sample_labels(_probe, "ctx", 0)
+    with pytest.raises(ValueError, match="n >= 1"):
+        caption_loss(_probe, "cap", "oracle", 0)
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        fusion_loss(_probe, "F", ["c1", "c2"], 4, weights=[1.0, math.nan])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        fusion_loss(_probe, "F", ["c1"], 4, weights=[-0.5])

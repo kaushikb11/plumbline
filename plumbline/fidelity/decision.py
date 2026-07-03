@@ -103,6 +103,12 @@ def histogram(labels: Sequence[str]) -> dict[str, float]:
 def sample_labels(
     decider: DeciderFn, context: str, n: int, *, label: DecisionLabel = canonical_label
 ) -> list[str]:
+    # Guard the common draw: n < 1 would yield an empty distribution whose every
+    # divergence is 0 — i.e. caption_loss/fusion_loss/sigma would silently report
+    # PERFECT fidelity from zero evidence. Fail loudly instead. (Covers
+    # decision_distribution, caption_loss, fusion_loss, and decision_stability's 2N.)
+    if n < 1:
+        raise ValueError(f"decision sampling needs n >= 1 (got {n})")
     return [label(decider(context)) for _ in range(n)]
 
 

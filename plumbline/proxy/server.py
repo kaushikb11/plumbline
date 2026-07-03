@@ -76,7 +76,10 @@ class HttpxTransport:
             }
             raw = await response.aread()
             if "text/event-stream" in response.headers.get("content-type", ""):
-                stream = CapturedStream(split_sse(raw.decode("utf-8")))
+                # errors="replace": a non-utf-8 byte in the SSE stream must not raise
+                # (that would 500 the runtime — a zero-touch leak). The framing is
+                # captured for replay; the raw bytes are preserved on the HTTPResponse.
+                stream = CapturedStream(split_sse(raw.decode("utf-8", errors="replace")))
                 return HTTPResponse(response.status_code, forwarded, raw, stream)
             return HTTPResponse(response.status_code, forwarded, raw, None)
         finally:

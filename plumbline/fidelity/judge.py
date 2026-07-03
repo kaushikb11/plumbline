@@ -159,15 +159,24 @@ def _parse_equivalent(response: Payload) -> bool:
     equivalence = False
     for clause in re.split(r"[;,.\n!?:]", text):
         negated = False
+        saw_polarity = False
         for word in _WORD.findall(clause):
             if word in _NEGATION_WORDS:
                 negated = True
             elif word in _DIFFERENT_WORDS:
+                saw_polarity = True
                 equivalence = equivalence or negated  # "do not diverge" -> equivalent
                 difference = difference or not negated
             elif word in _SAME_WORDS:
+                saw_polarity = True
                 difference = difference or negated  # "not equivalent" -> not equivalent
                 equivalence = equivalence or not negated
+        # A BARE negation — a clause with a negation word but no polarity word
+        # ("...equivalent, but no.") — is a late reversal: count it as a difference
+        # signal so it can't silently pass as EQUIVALENT (the one un-conservative
+        # parse). Conservative for a gate: difference wins.
+        if negated and not saw_polarity:
+            difference = True
     if difference:
         return False  # any difference signal wins
     return equivalence  # equivalent iff a same-signal was seen; unparseable -> False

@@ -38,6 +38,14 @@ class VirtualClock:
         return self._tick
 
     def bind_replay(self, episode: Episode) -> None:
-        """Serve recorded ticks from `episode` during replay (§3.4)."""
+        """Serve recorded ticks from `episode` during replay (§3.4).
+
+        NOTE (honesty): the Replayer *binds* the clock but reconstructs a tick's
+        seam grouping from `SeamEvent.logical_tick` + the seq-sort in
+        `TraceStore.load_episode`, not by calling `advance()`/`now_tick()` here.
+        So on the current replay paths this object is bound but not stepped —
+        `now_tick`/`advance` exist for a runtime driver that wants to *read* the
+        recorded tick stream, and are the seam a clock-hook adapter would use.
+        Correct ordering does not depend on this object being stepped."""
         self._replay = tuple(event.logical_tick for event in episode.events)
         self._cursor = 0

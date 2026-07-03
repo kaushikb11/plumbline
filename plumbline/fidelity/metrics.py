@@ -29,6 +29,7 @@ and require human review before Experiment A/C depend on them:
 ===============================================================================
 """
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -133,8 +134,11 @@ def fusion_loss(
     dropped task-relevant information from C_i. `salient` and `weights` are the
     §14.6 judgment calls (see the module HUMAN REVIEW banner); both injectable.
     """
-    if weights is not None and len(weights) != len(captions):
-        raise ValueError(f"weights length {len(weights)} != captions length {len(captions)}")
+    if weights is not None:
+        if len(weights) != len(captions):
+            raise ValueError(f"weights length {len(weights)} != captions length {len(captions)}")
+        if any(not math.isfinite(w) or w < 0.0 for w in weights):
+            raise ValueError("weights must be finite and non-negative")
     count = len(captions)
     if count == 0:
         return 0.0

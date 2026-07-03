@@ -8,7 +8,7 @@ On replay, every model call receives the **recorded request** and returns the **
 
 Concretely, this is what the substrate proves:
 
-- **Faithful replay** serves every seam from the trace; `tests/test_determinism.py` asserts the recorded model I/O round-trips byte-identically through the store.
+- **Faithful replay** serves every seam from the trace; `tests/test_determinism.py` asserts the recorded model I/O round-trips byte-identically through the store. "Byte-identical" is at the **canonical-payload layer** — the normalized JSON `Payload` a runtime parses and acts on, which is what determinism requires — not the raw upstream HTTP wire bytes (a provider's incidental key ordering or whitespace is not reproduced, and does not affect any decision). Binary content is byte-exact via content-addressed blobs.
 - **Re-execution** (`tests/test_reexecution.py`) re-drives a runtime loop while the proxy serves each recorded response *by request digest*; the recomputed decision/action sequence matches the recording, while a fresh live run with a different seed diverges — proving the serving, not loop determinism, is doing the work.
 
 ## What Plumbline does NOT guarantee

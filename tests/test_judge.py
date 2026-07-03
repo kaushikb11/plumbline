@@ -103,3 +103,22 @@ def test_judge_noise_floor_detects_self_disagreement() -> None:
         return Payload(inline={"choices": [{"message": {"content": "EQUIVALENT"}}]})
 
     assert judge_noise_floor(seq_a, seq_b, steady_judge, 200) == 0.0
+
+
+def test_parse_equivalent_bare_late_negation_is_conservative() -> None:
+    # A judge that hedges then reverses ("...equivalent, but no.") must NOT pass as
+    # EQUIVALENT — a bare trailing negation counts as a difference signal. (Framework
+    # review, fidelity finding: the one parse that landed un-conservatively.)
+    from plumbline.core.trace import Payload
+    from plumbline.fidelity.judge import _parse_equivalent
+
+    def _p(text: str) -> Payload:
+        return Payload(inline=text)
+
+    assert _parse_equivalent(_p("They look equivalent at first, but no.")) is False
+    assert _parse_equivalent(_p("same behavior overall; not.")) is False
+    # And the good cases still parse correctly:
+    assert _parse_equivalent(_p("EQUIVALENT")) is True
+    assert _parse_equivalent(_p("NOT EQUIVALENT")) is False
+    assert _parse_equivalent(_p("they do not diverge; identical")) is True
+    assert _parse_equivalent(_p("not fully equivalent")) is False

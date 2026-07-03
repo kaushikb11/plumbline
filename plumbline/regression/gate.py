@@ -18,6 +18,7 @@ robot decisions) and the determinism the replay substrate provides — you gate 
 """
 
 import enum
+import logging
 import math
 import statistics
 from collections.abc import Callable, Mapping, Sequence
@@ -41,6 +42,7 @@ from plumbline.fidelity import (
 from plumbline.fidelity.decision import total_variation
 from plumbline.regression.golden import GoldenSet, action_sequence
 
+_log = logging.getLogger("plumbline.regression")
 _EXACT_MATCHER: Matcher = ExactMatcher()
 
 
@@ -179,6 +181,17 @@ def gate(
     decider).
     """
     if decision is not None:
+        # Foot-gun guard (math-review Q13): in decision mode the threshold is
+        # `decision.k` σ-units, NOT `drift_threshold` (distance) — the latter is
+        # silently unused. Warn if a caller passed a meaningful one expecting it to
+        # apply, rather than letting a 0.1 quietly become a 3.0-σ gate.
+        if drift_threshold != 0.0:
+            _log.warning(
+                "gate: drift_threshold=%s is IGNORED in decision mode; the threshold is "
+                "decision.k=%s (sigma-units). Pass drift_threshold=0.0 to silence this.",
+                drift_threshold,
+                decision.k,
+            )
         return _decision_gate(store, golden, config, decision, policy, quantile)
     drifts: list[EpisodeDrift] = []
     for episode in golden.episodes():
