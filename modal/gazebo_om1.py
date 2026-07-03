@@ -27,11 +27,25 @@ prints seam counts, observed bus keys, faithful-replay verdict, and how far the
 robot physically moved.
 """
 
+import re
 import subprocess
 import time
 from pathlib import Path
 
 import modal
+
+# Strings interpolated into `bash -lc` commands and filesystem paths (world /
+# episode / scene names from CLI args or a data file) are validated to a safe
+# charset so a value with quotes / ; / $() / .. can't break out of the command
+# or escape the store root. Numeric pose values are float()-coerced at use.
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _safe(value: str, kind: str) -> str:
+    if not _SAFE_NAME.match(value):
+        raise ValueError(f"unsafe {kind}: {value!r} (allowed: letters, digits, '.', '_', '-')")
+    return value
+
 
 MINUTES = 60
 OM1_COMMIT = "70c23e21fa3a9154e602009033c8cf05af262a18"  # the source-audited pin
@@ -237,6 +251,7 @@ def doctor() -> None:
 def probe(world: str = "maze_world") -> None:
     """Boot ONLY the sim and interrogate the lidar->scan->om_path chain link by
     link — the cheap diagnosis for why om/paths/r{K} might be silent."""
+    world = _safe(world, "world")
     world_path = f"/opt/om1-sim/install/go2_description/share/go2_description/worlds/{world}.sdf"
     subprocess.Popen(
         [
@@ -378,6 +393,7 @@ def capture_scenes(poses: str, name: str = "maze-scenes", world: str = "maze_wor
     import math
 
     pose_list = json_module.loads(poses)
+    world = _safe(world, "world")
     world_path = f"/opt/om1-sim/install/go2_description/share/go2_description/worlds/{world}.sdf"
     subprocess.Popen(
         [
@@ -399,14 +415,17 @@ def capture_scenes(poses: str, name: str = "maze-scenes", world: str = "maze_wor
     time.sleep(10)  # let the controller reach standing
     Path("/tmp/save_frame.py").write_text(_FRAME_SAVER)
 
-    out_dir = Path(f"/traces/{name}")
+    out_dir = Path(f"/traces/{_safe(name, 'name')}")
     out_dir.mkdir(parents=True, exist_ok=True)
     captured: list[dict[str, object]] = []
     for pose in pose_list:
-        scene_id = pose["scene_id"]
-        qz, qw = math.sin(pose["yaw"] / 2), math.cos(pose["yaw"] / 2)
+        scene_id = _safe(str(pose["scene_id"]), "scene_id")
+        # float() every numeric before it enters the command — a non-numeric value
+        # in the JSON pose file cannot then inject shell/proto content.
+        px, py, yaw = float(pose["x"]), float(pose["y"]), float(pose["yaw"])
+        qz, qw = math.sin(yaw / 2), math.cos(yaw / 2)
         request = (
-            f'name: "go2", position: {{x: {pose["x"]}, y: {pose["y"]}, z: 0.45}}, '
+            f'name: "go2", position: {{x: {px}, y: {py}, z: 0.45}}, '
             f"orientation: {{z: {qz}, w: {qw}}}"
         )
         code, out = _sh(
@@ -462,11 +481,15 @@ def record(
     import sys
     from collections import Counter
 
+    episode_id = _safe(episode_id, "episode_id")  # -> /traces/<episode_id>-store
+    paths_range = _safe(paths_range, "paths_range")  # -> the sim/om/paths/<range> key
+
     # A running interpreter won't see a mid-process editable install (.pth files
     # are only processed at startup) — put the mounted repo on sys.path directly;
     # its dependencies are already baked into the image.
     sys.path.insert(0, "/root/plumbline-repo")
 
+    world = _safe(world, "world")
     world_path = f"/opt/om1-sim/install/go2_description/share/go2_description/worlds/{world}.sdf"
 
     # 1. Gazebo + go2_sim, headless. The launch composes gz_args from `world` +
