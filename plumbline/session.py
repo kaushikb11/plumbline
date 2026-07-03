@@ -147,7 +147,10 @@ class RecordingSession(Recorder):
                 request=request,
                 response=request,  # the bus message is the action as issued
                 model_id=None,
-                params={},
+                # The originating bus key, in non-digested params: which key a
+                # sample arrived on is attribution (e.g. pinning the real cmd_vel
+                # key from a recorded episode), not payload identity.
+                params={"plumbline.bus_key": sample.key_expr},
                 request_digest=canonicalize(request).digest,
                 latency_ms=0.0,
             )

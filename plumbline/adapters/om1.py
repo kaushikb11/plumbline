@@ -13,9 +13,16 @@ CONFIRMED from source:
   {turn left, turn right, move forwards, move back, stand still} (go2 autonomy
   move.go), executed as a CDR geometry_msgs/Twist over Zenoh to `cmd_vel`.
 
-STILL OPEN (needs a real recorded episode; kept UNVERIFIED inline): the exact
-`cmd_vel` Zenoh key expression (namespace / ros2dds-bridge prefix), the exact
-tool-call wire shape OM1 emits, and the default portal URL string.
+RUN-VERIFIED (SIL episode `om1-sil-001`, real OM1 Go binary + real cloud LLM +
+Zenoh, no sim — examples/record_om1_sil.py; docs/om1-integration.md):
+- Zenoh key: exactly `cmd_vel` (no namespace/prefix) for OM1's direct publish;
+  the tap captured 1,470 CDR Twist frames on it. An `rt/`-prefixed key applies
+  only through the ros2dds bridge, so `**/cmd_vel` stays in the defaults.
+- Tool-call wire shape via an OpenAI-compatible base_url: the OpenAI `tool_calls`
+  array ({id, type: "function", function: {name: "Move", arguments: "<json>"}}).
+  The Gemini `functionCall` branch remains for portal-native Gemini responses.
+- Portal defaults (from OM1 source at main/70c23e2): OpenAILLM
+  `https://api.openmind.com/api/core/openai`, GeminiLLM `.../api/core/gemini`.
 """
 
 import json
@@ -86,9 +93,9 @@ class OM1Adapter:
     # input base_url paths here if a deployment uses them.
     config_base_url_paths: tuple[str, ...] = ("cortex_llm.config.base_url",)
     append_v1: bool = True
-    # UNVERIFIED (needs a real episode): the Go2 autonomy `Move` connector publishes a
-    # CDR Twist over Zenoh to the `cmd_vel` topic (config cmd_vel_topic: "cmd_vel");
-    # the fully-qualified key (namespace / ros2dds-bridge prefix) is not confirmed.
+    # RUN-VERIFIED (SIL episode om1-sil-001): OM1's Move connector publishes CDR
+    # Twist frames on the bare `cmd_vel` key (the configured cmd_vel_topic,
+    # verbatim). `**/cmd_vel` is kept for ros2dds-bridge-prefixed deployments.
     action_key_expressions: tuple[str, ...] = ("cmd_vel", "**/cmd_vel")
     # Sensor/data-bus keys (reserved; not tapped as actions). Still open.
     data_bus_key_expressions: tuple[str, ...] = ("**/data_bus/**",)

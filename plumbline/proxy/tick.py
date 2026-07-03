@@ -34,9 +34,9 @@ class BoundaryTickPolicy:
     action cycle (default boundary: SENSOR_TO_CAPTION).
 
     Consecutive boundary seams share a tick (multi-camera / multi-caption). A loop
-    with no boundary seam (e.g. a pure decide loop) collapses to one tick — configure
-    a different `boundary_seam` or send the `x-plumbline-tick` header for such
-    runtimes. An explicit override wins and resyncs the counter.
+    with no boundary seam (e.g. a pure decide loop) collapses to one tick — use
+    `PerCallTickPolicy` or send the `x-plumbline-tick` header for such runtimes.
+    An explicit override wins and resyncs the counter.
     """
 
     boundary_seam: Seam = Seam.SENSOR_TO_CAPTION
@@ -65,3 +65,29 @@ class BoundaryTickPolicy:
             self._started = True
             self._prev_was_boundary = False
             return self._tick
+
+
+@dataclass
+class PerCallTickPolicy:
+    """Advance `logical_tick` on EVERY call at the boundary seam — each such call is
+    its own cycle.
+
+    For pure decide loops (e.g. OM1 SIL with no perception call: every recorded seam
+    IS the Cortex call), where BoundaryTickPolicy's consecutive-boundary-share rule
+    (meant for multi-camera bursts) would collapse the whole run to one tick. Found
+    against the real OM1 binary. Non-boundary seams stay within the current cycle;
+    an explicit override wins and resyncs the counter.
+    """
+
+    boundary_seam: Seam = Seam.FUSE_TO_DECIDE
+    _tick: int = field(default=-1, init=False)  # first boundary call becomes tick 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def next_tick(self, seam: Seam, override: int | None) -> int:
+        with self._lock:
+            if override is not None:
+                self._tick = override
+                return override
+            if seam == self.boundary_seam:
+                self._tick += 1
+            return max(self._tick, 0)  # a pre-boundary seam lands in the first cycle

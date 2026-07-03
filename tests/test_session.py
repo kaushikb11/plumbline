@@ -140,3 +140,15 @@ def test_session_lifecycle_is_idempotent() -> None:
 
 def _bus_sample() -> BusSample:
     return BusSample(key_expr="om1/agent/actions/go2", payload={"commands": []}, wall_ts=0.0)
+
+
+def test_bus_sample_records_originating_key() -> None:
+    # The key a sample arrived on is attribution (pinning the real cmd_vel key from
+    # a recorded episode) — carried in non-digested params, found in the OM1 SIL run.
+    store = TraceStore()
+    session = RecordingSession(store, episode_id="ep", metadata={})
+    session.open()
+    session.record_bus_sample(_bus_sample())
+    session.close()
+    event = store.load_episode("ep").events[0]
+    assert event.params["plumbline.bus_key"] == "om1/agent/actions/go2"

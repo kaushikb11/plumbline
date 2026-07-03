@@ -95,15 +95,38 @@ CONFIG=unitree_go2_autonomy USE_SIM=true make dev
 Source: docs "Gazebo". See [record-om1-gazebo.md](record-om1-gazebo.md) for wiring the
 proxy + tap into this flow.
 
-## Still open (needs a real recorded episode — kept `UNVERIFIED` in code)
+## Pinned by a real recorded episode (SIL run `om1-sil-001`)
 
-1. **Exact Zenoh `cmd_vel` key expression.** The config topic is `cmd_vel` and the
-   Go2 publishes via `internal/zenoh`, but the fully-qualified key (any robot
-   namespace / `rt/` ros2dds-bridge prefix) is not confirmed from source — the
-   publish line in `cmd_vel.go` was not visible. Adapter default: `cmd_vel` /
-   `**/cmd_vel`, overridable.
-2. **Exact tool-call wire format** (OpenAI `tool_calls` vs Gemini `functionCall`) as
-   OM1 emits it on the wire — `OM1ActionSchema` parses both shapes tolerantly, to be
-   pinned against a captured Cortex response.
-3. **The default OpenMind portal base URL string** and whether VLM/ASR inputs accept
-   a `base_url` override for the same portal.
+The three previously-open items were pinned by a **software-in-the-loop episode**:
+the real OM1 Go binary (built from `main`, commit `70c23e2`) with `agent_inputs: []`,
+its Cortex pointed through the Plumbline recording proxy at a real cloud LLM, its
+`Move` action publishing over real Zenoh, and Plumbline's tap as the only subscriber
+plus a stubbed-HAL odom/paths publisher (`examples/record_om1_sil.py`). 36 Cortex
+tool-call decisions and 1,470 `cmd_vel` CDR `Twist` frames captured; faithful replay
+byte-identical over all 1,542 events; the action sequence recovered via
+`OM1ActionSchema` matches OM1's own log (36× "move forwards").
+
+1. **Zenoh `cmd_vel` key: exactly `cmd_vel`** — the configured `cmd_vel_topic`,
+   verbatim, no namespace or prefix (`move.go` passes it straight to
+   `DeclarePublisher`; the tap captured frames on the bare key). An `rt/`-style
+   prefix applies only through the ros2dds bridge, so the adapter keeps
+   `**/cmd_vel` as a secondary default. Recorded bus events now carry the
+   originating key in `params["plumbline.bus_key"]`.
+2. **Tool-call wire format via an OpenAI-compatible `base_url`: the OpenAI
+   `tool_calls` array** — `{id, type: "function", function: {name: "Move",
+   arguments: "{\"action\": \"move forwards\"}"}}`, captured verbatim at the
+   FUSE_TO_DECIDE seam. All of OM1's LLM plugins share one OpenAI-compat client
+   (`plugins/llm/openai_compat.go`); the Gemini `functionCall` branch in
+   `OM1ActionSchema` stays for portal-native Gemini responses. Note `GeminiLLM`
+   sets `tool_choice: "required"` while `OpenAILLM` uses `"auto"` — with small
+   models, `"required"` is what guarantees a decision every tick.
+3. **Portal base URLs (from source):** `OpenAILLM` defaults to
+   `https://api.openmind.com/api/core/openai`, `GeminiLLM` to
+   `https://api.openmind.com/api/core/gemini`; the cloud sim Zenoh broker is
+   `wss://api.openmind.com/api/core/simulation/zenoh`. VLM/ASR inputs remain
+   provider-managed (WS/RTSP), not `base_url`-overridable — the WS caption path is
+   covered by the WS proxy (limitations gap #1).
+
+Still open for a **Gazebo** episode (sim-grounded, WS5 definition-of-done): the
+ros2dds-bridged key naming and sim-scene ground truth. The SIL run verifies the
+adapter's interface facts; it does not exercise Gazebo.

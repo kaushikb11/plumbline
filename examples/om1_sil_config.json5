@@ -1,0 +1,38 @@
+// Plumbline SIL (software-in-the-loop) config: OM1 + Zenoh with a stubbed HAL.
+// Copy into your OM1 checkout as config/plumbline_sil.json5, then run
+// examples/record_om1_sil.py (see its docstring for the full flow).
+// No sim, no robot, no external perception services. The Cortex LLM points at the
+// Plumbline recording proxy (which forwards to a real model endpoint); the Move
+// action publishes CDR Twist over Zenoh to cmd_vel, where the Plumbline tap is the
+// only subscriber (the "stubbed HAL").
+{
+  version: "v1.1.0",
+  hertz: 1,
+  name: "plumbline_sil",
+  api_key: "${OM_API_KEY:-openmind_free}",
+  system_prompt_base: "You are a robot dog autonomously exploring a room. On EVERY response you MUST call the Move function exactly once with the action that best continues safe exploration. Vary your movements: mostly move forwards, occasionally turn left or turn right.",
+  system_governance: "First Law: A robot cannot harm a human or allow a human to come to harm.",
+  system_prompt_examples: "Example: if nothing is observed, you might call Move with 'move forwards'.",
+  agent_inputs: [],
+  cortex_llm: {
+    // GeminiLLM is the OpenAI-compat client with tool_choice "required" — a Move every tick.
+    type: "GeminiLLM",
+    config: {
+      base_url: "http://127.0.0.1:8900/v1",
+      api_key: "sil-local",
+      model: "cortex",
+      agent_name: "Bits",
+      history_length: 2,
+    },
+  },
+  agent_actions: [
+    {
+      name: "unitree_go2_autonomy",
+      llm_label: "Move",
+      connector: "move",
+      config: {
+        cmd_vel_topic: "cmd_vel",
+      },
+    },
+  ],
+}

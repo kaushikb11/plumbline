@@ -80,9 +80,13 @@ before assuming a headline capability.
 - **Physical-action capture is lossy.** The Zenoh tap stores the binary CDR `Twist` via
   `utf-8`-`replace`, not a content-addressed blob; the `DECIDE_TO_ACT` comparison rests
   on the reconstructed tool call, not the bus bytes.
-- **The OM1 adapter is verified against OM1's source, not a running episode** (WS5
-  definition-of-done unmet; needs Ubuntu+ROS2+Gazebo); three interface facts stay
-  `UNVERIFIED` (see [om1-integration.md](om1-integration.md)).
+- **The OM1 adapter is now run-verified via a SIL episode** — the real OM1 Go
+  binary + real cloud LLM + real Zenoh, no sim (`examples/record_om1_sil.py`):
+  faithful replay byte-identical over 1,542 events, action sequence recovered,
+  and the three previously-`UNVERIFIED` interface facts pinned (see
+  [om1-integration.md](om1-integration.md)). Still open for full WS5: a
+  **Gazebo** episode (needs Ubuntu+ROS2+Gazebo) for sim-grounded scenes and the
+  ros2dds-bridged key naming.
 
 ## Testing without a robot
 
