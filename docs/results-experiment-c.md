@@ -74,3 +74,48 @@ For a noise-free illustration of the same thesis through the full network stack
 (real HTTP, real N-sampling) with a scripted model stand-in, see the
 `caption_loss` / leaderboard unit tests. The mechanism there is clean; this page
 is the honest real-model version, noise and all.
+
+## The cloud-GPU replication (Modal, larger models)
+
+The same experiment run against real GPU-served models on
+[Modal](../modal/README.md) — `Qwen2.5-VL-7B-Instruct` captioner,
+`Qwen2.5-3B-Instruct` decider (both vLLM, `modal deploy modal/vlm.py modal/llm.py`):
+
+```bash
+PLUMBLINE_VLM_URL=https://<ws>--plumbline-vlm-serve.modal.run/v1 PLUMBLINE_VLM=captioner \
+PLUMBLINE_LLM_URL=https://<ws>--plumbline-llm-serve.modal.run/v1 PLUMBLINE_DECIDER=cortex \
+python examples/experiment_c.py
+```
+
+```
+1. captioner/wide-fov:   decision_fidelity=1.000 (mean caption_loss=0.000)
+2. captioner/narrow-fov: decision_fidelity=0.500 (mean caption_loss=0.500)
+```
+
+| scene | wide-fov loss | narrow-fov loss |
+|---|---|---|
+| obstacle-01 | 0.0 | **1.0** |
+| obstacle-02 | 0.0 | **1.0** |
+| clear-01 | 0.0 | 0.0 |
+| clear-02 | 0.0 | 0.0 |
+
+With models strong enough to be reliable at this task, the separation is exact:
+the narrow front-end is charged maximal loss on precisely the two scenes where
+its cropped view drops the obstacle and the decision flips, and nothing else. At
+temperature 0.2 this decider is effectively deterministic, so the distributions
+are point masses and per-scene loss is 0-or-1 (σ ≈ 0); the laptop run above shows
+the same mechanism under real sampling noise.
+
+Two failures found *by the metric* on the way to this table are worth recording:
+
+- **`Qwen2-VL-2B` is decision-blind here.** Asked "is the path blocked or
+  clear?", it answers "clear" on the obstacle scene — while, asked to *describe*
+  the image, it reports "a block or a box" in the center. It sees the object but
+  cannot bind it to the blocked/clear judgment, so *both* front-ends were charged
+  loss 1.0 on the obstacle scenes and the leaderboard (correctly) refused to
+  separate them. A caption-surface metric would score its fluent captions well.
+- **The decider needs the implication, not just the fact.** Given "there is an
+  object on the floor ahead, a black box", `Qwen2.5-3B` still decides
+  *move_forward*; only "…blocking the path" makes it back up. Task-relevant
+  information must survive in decision-usable form — the founders' LiDAR-dog
+  fix ("richer captioning") reproduced with off-the-shelf models.

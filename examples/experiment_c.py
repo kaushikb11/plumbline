@@ -41,9 +41,15 @@ VLM_URL = os.environ.get("PLUMBLINE_VLM_URL", BASE_URL)
 LLM_URL = os.environ.get("PLUMBLINE_LLM_URL", BASE_URL)
 VLM = os.environ.get("PLUMBLINE_VLM", "moondream")
 DECIDER = os.environ.get("PLUMBLINE_DECIDER", "llama3.2:1b")
-PROMPT = (
+# Overridable because captioners differ in what phrasing they can answer: moondream
+# handles the blocked-or-clear framing (docs/results-experiment-c.md), while e.g.
+# Qwen2-VL-2B sees the obstacle but still answers "clear" under it — an object-grounded
+# prompt ("state whether there is an object on the floor") is needed for the FOV
+# comparison to measure FOV, not prompt-binding failure.
+PROMPT = os.environ.get(
+    "PLUMBLINE_CAPTION_PROMPT",
     "Look at this robot's forward camera. In ONE sentence: "
-    "is the path ahead blocked by an object, or clear?"
+    "is the path ahead blocked by an object, or clear?",
 )
 _BLOCKED = "a large solid object is directly ahead on the floor, blocking the path"
 _CLEAR = "the corridor ahead is open with no objects in the way"

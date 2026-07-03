@@ -15,7 +15,10 @@ import subprocess
 
 import modal
 
-MODEL = "Qwen/Qwen2-VL-2B-Instruct"  # small vision-language model, cheap
+# Qwen2-VL-2B sees objects but cannot bind them to a blocked/clear judgment
+# (it captions an obstacle scene as "path is clear"); 2.5-VL-7B handles the
+# perceive->judge step and still fits an A10G in fp16.
+MODEL = "Qwen/Qwen2.5-VL-7B-Instruct"
 PORT = 8000
 MINUTES = 60
 
