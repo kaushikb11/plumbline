@@ -52,28 +52,29 @@ This validates the WebSocket half of limitations gap #1 against a real remote se
 and it caught a real bug the fakes missed (recorded JSON frames were re-serialized on
 replay, changing their bytes; frames are now stored verbatim).
 
-## Tier 3 — real OM1 + Gazebo (stretch)
+## Tier 3 — real OM1 + Gazebo (RUN AND PASSING)
 
-`modal/gazebo_om1.py` is an **honest skeleton** (⚠️ NOT run/verified) of a custom Modal GPU
-image — ROS2 + `go2_gazebo_sim` + `zenoh-bridge-ros2dds` + the OM1 Go binary pointed at the
-Modal model URLs, headless EGL, up-to-24 h timeout. This is the one thing that makes the OM1
-adapter **run-verified** (confirming the three `UNVERIFIED` facts in
-[docs/om1-integration.md](../docs/om1-integration.md)). It maps to the wiring in
-[docs/record-om1-gazebo.md](../docs/record-om1-gazebo.md).
+`modal/gazebo_om1.py` runs the full closed loop headlessly on a Modal T4: Gazebo
+physics (`go2_sim` + champ from [OpenMind/OM1-sim](https://github.com/OpenMind/OM1-sim))
++ `zenoh-bridge-ros2dds` + the real OM1 Go binary (pinned commit, built in-image) + a
+live Cortex through the recording proxy.
 
-It is a starting point, not a working script — expect to iterate on:
-- **The base image** — the exact ROS2/Gazebo base + how to build the OM1 Go binary and the
-  Go2 sim package (`TODO(UNVERIFIED)` markers in the file).
-- **Headless rendering** — Gazebo needs EGL (`--headless-rendering`, OGRE2) or xvfb; sensor
-  cameras need the GPU.
-- **Real-time on serverless** — a physics sim on a Modal container is untested; watch the
-  function timeout and whether the loop keeps real-time.
-- **The record wiring (steps 3–5)** — start the Plumbline proxy + `RecordingCoordinator` +
-  the `cmd_vel` Zenoh tap, and point OM1's `cortex_llm.config.base_url` at the proxy. The
-  Python is in `docs/record-om1-gazebo.md`; the skeleton sketches where it goes.
-- **The `UNVERIFIED` facts** — the exact `cmd_vel` Zenoh key, the tool-call wire shape, and
-  the OpenMind portal URL. A successful run is what pins them.
+```bash
+modal run modal/gazebo_om1.py::doctor                          # 7 component checks
+modal run modal/gazebo_om1.py::record --llm-url <llm url> --seconds 150
+modal volume get plumbline-traces <episode>-store .            # pull the trace
+```
 
-If real-time Gazebo on Modal proves impractical, the **software-in-the-loop** middle path
-(run OM1 + Zenoh with a stubbed HAL, no physics) captures a real OM1 episode's model + Zenoh
-action seams at far lower effort — see [docs/limitations.md](../docs/limitations.md).
+Result (episode `om1-gazebo-004`): 90 live-LLM decisions, 2,407 real `cmd_vel` CDR
+`Twist` frames tapped, the simulated Go2 **walked 3.455 m**, faithful replay
+byte-identical over 2,587 events — locally reproduced byte-identical on a different
+machine/arch. The run summary reports seam counts, observed bus keys, connector-gate
+counts, and meters traveled.
+
+Hard-won facts encoded in the app (see its docstring): `USE_SIM` must stay **unset**
+(OM1's sim mode cloud-tethers `cmd_vel` with no override), the sim package is
+`go2_sim` (OM1's docs name is stale), OM1-sim's own `cyclonedds.xml` + bridge config
+are required in a container (loopback iface, no multicast, participant-index ceiling),
+and two sim gaps are shimmed zero-touch: champ's planar odom lacks the body height
+OM1's Move connector requires ("standing"), and `om_path` publishes `/om/paths/r{K}`
+while OM1 subscribes bare `om/paths`.

@@ -85,13 +85,17 @@ before assuming a headline capability.
 - **Physical-action capture is lossy.** The Zenoh tap stores the binary CDR `Twist` via
   `utf-8`-`replace`, not a content-addressed blob; the `DECIDE_TO_ACT` comparison rests
   on the reconstructed tool call, not the bus bytes.
-- **The OM1 adapter is now run-verified via a SIL episode** — the real OM1 Go
-  binary + real cloud LLM + real Zenoh, no sim (`examples/record_om1_sil.py`):
-  faithful replay byte-identical over 1,542 events, action sequence recovered,
-  and the three previously-`UNVERIFIED` interface facts pinned (see
-  [om1-integration.md](om1-integration.md)). Still open for full WS5: a
-  **Gazebo** episode (needs Ubuntu+ROS2+Gazebo) for sim-grounded scenes and the
-  ros2dds-bridged key naming.
+- **The OM1 adapter is run-verified end-to-end, including Gazebo (WS5 DONE).**
+  First via a SIL episode (`examples/record_om1_sil.py`: 1,542 events,
+  byte-identical replay, the three `UNVERIFIED` facts pinned), then via the
+  full **Tier-3 Gazebo closed loop on Modal** (`modal/gazebo_om1.py`, episode
+  `om1-gazebo-004`): real physics (go2_sim + champ), real bridged odometry,
+  90 live-LLM decisions, 2,407 real `cmd_vel` Twist frames captured, **the
+  simulated Go2 walked 3.455 m**, faithful replay byte-identical over 2,587
+  events — and reproduced byte-identically on a different machine/arch. Bridged
+  key naming pinned (bare topic names). Two sim gaps are shimmed zero-touch and
+  documented ([om1-integration.md](om1-integration.md)). Still open: sim
+  ground-truth extraction for caption fidelity (Experiment A in sim, §14.5).
 
 ## Testing without a robot
 

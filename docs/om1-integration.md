@@ -127,6 +127,26 @@ byte-identical over all 1,542 events; the action sequence recovered via
    provider-managed (WS/RTSP), not `base_url`-overridable — the WS caption path is
    covered by the WS proxy (limitations gap #1).
 
-Still open for a **Gazebo** episode (sim-grounded, WS5 definition-of-done): the
-ros2dds-bridged key naming and sim-scene ground truth. The SIL run verifies the
-adapter's interface facts; it does not exercise Gazebo.
+## Pinned by the real Gazebo episode (Tier 3, `om1-gazebo-004`)
+
+The full closed loop ran headlessly on Modal (`modal/gazebo_om1.py`): Gazebo
+physics (go2_sim + champ from OpenMind/OM1-sim) + `zenoh-bridge-ros2dds` + the
+real OM1 binary + a live cloud Cortex through the recording proxy. 90 decisions,
+2,407 real `cmd_vel` CDR `Twist` frames tapped, **the simulated Go2 walked
+3.455 m**, faithful replay byte-identical over all 2,587 events.
+
+4. **Bridged key naming: bare topic names, no `rt/` prefix.** With
+   `zenoh-bridge-ros2dds` defaults, ROS2 `/odom` ↔ zenoh key `odom`, `/cmd_vel`
+   ↔ `cmd_vel` — OM1's bare-key subscriptions work against the bridge as-is.
+   (The Tier-3 harness adds a `namespace: "/sim"` to the bridge deliberately, so
+   its sim-gap shim can sit between OM1 and the raw sim topics.)
+5. **Two sim gaps found (upstream-relevant, shimmmed zero-touch in the harness):**
+   champ's odometry is planar (`pose.z = 0`) while OM1's Move connector requires
+   the body height the real Go2 firmware reports there (> 0.24 m = "standing")
+   before it will drive — the harness relays `sim/odom → odom` with z lifted to
+   0.30 m; and OM1-sim's `om_path` publishes range-keyed `/om/paths/r{K}` while
+   OM1 subscribes the bare `om/paths` — the harness publishes an all-clear
+   `om/paths` stub. Also upstream: OM1's `docs/simulators/gazebo.md` names a
+   stale package (`go2_gazebo_sim`; the real one is `go2_sim`), and
+   `USE_SIM=true` routes `cmd_vel` through OpenMind's cloud broker with no URL
+   override (all-local recording must keep it unset).
