@@ -16,6 +16,7 @@ Requires the optional `httpx` dependency:  pip install "plumbline[proxy]".
 The rest of `plumbline.proxy` does not import httpx, so the core stays light.
 """
 
+import importlib
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any
 
@@ -265,7 +266,10 @@ class WebsocketsTransport:  # pragma: no cover - thin `websockets` wrapper
     async def connect(
         self, url: str, *, subprotocols: Sequence[str], headers: Mapping[str, str]
     ) -> WsConnection:
-        import websockets  # type: ignore[import-not-found]
+        # Dynamic import so mypy --strict passes identically whether or not the
+        # optional `websockets` extra is installed (a static import needs a
+        # type-ignore that becomes an unused-ignore error once it IS installed).
+        websockets: Any = importlib.import_module("websockets")
 
         connection = await websockets.connect(
             url, subprotocols=list(subprotocols) or None, additional_headers=dict(headers)

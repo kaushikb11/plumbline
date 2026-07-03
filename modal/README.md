@@ -40,12 +40,17 @@ Llama → `llama3_json`, …). These pins may need a bump as vLLM evolves.
 ```bash
 modal deploy modal/ws_captions.py
 # -> wss://<workspace>--plumbline-ws-captions-serve.modal.run/ws/captions
+
+PLUMBLINE_WS_URL=wss://<workspace>--plumbline-ws-captions-serve.modal.run/ws/captions \
+python examples/modal_ws_validate.py   # prints PASS iff replay is byte-identical
 ```
 
-Point a WS record proxy's `upstream` at that URL — `make_ws_asgi_app` +
-`WebsocketsTransport` in `plumbline/proxy/server.py` (both shipped) capture the real WS
-caption stream as `SENSOR_TO_CAPTION` events, faithfully replayable via
-`make_ws_replay_asgi_app`. This closes the WebSocket half of limitations gap #1.
+The driver dials the real `wss://` stream through `AsyncWSProxy` + `WebsocketsTransport`
+(`plumbline/proxy/server.py`), records each caption frame as a `SENSOR_TO_CAPTION` event,
+then faithful-replays with no upstream and asserts the served frames are byte-identical.
+This validates the WebSocket half of limitations gap #1 against a real remote server —
+and it caught a real bug the fakes missed (recorded JSON frames were re-serialized on
+replay, changing their bytes; frames are now stored verbatim).
 
 ## Tier 3 — real OM1 + Gazebo (stretch)
 

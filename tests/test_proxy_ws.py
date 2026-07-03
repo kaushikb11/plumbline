@@ -20,6 +20,10 @@ _ENDPOINT = "/ws/captions"
 _CTX = Context(episode_id="ws-1", model_id=None, params={}, logical_tick=0)
 _CAPTIONS = (
     WsFrame(kind="text", text='{"caption": "a person is ahead"}'),
+    # Compact separators: json.loads -> json.dumps would NOT round-trip these
+    # bytes. Regression fixture for byte-identical replay (found against a real
+    # remote WS server, whose framing differed from json.dumps defaults).
+    WsFrame(kind="text", text='{"caption":"a corridor is clear","conf":0.9}'),
     WsFrame(kind="text", text="an obstacle to the left"),
     WsFrame(kind="bytes", data=b"\x01\x02\x03raw"),
 )
@@ -85,24 +89,24 @@ def test_records_captions_as_sensor_to_caption() -> None:
     store = TraceStore()
     _record(store)
     events = store.load_episode(_CTX.episode_id).events
-    assert len(events) == 3
+    assert len(events) == 4
     assert all(event.seam is Seam.SENSOR_TO_CAPTION for event in events)
-    assert [event.seq for event in events] == [0, 1, 2]
-    assert len({event.request_digest for event in events}) == 3  # unique, never collapsed
+    assert [event.seq for event in events] == [0, 1, 2, 3]
+    assert len({event.request_digest for event in events}) == 4  # unique, never collapsed
 
 
 def test_zero_touch_client_receives_upstream_frames_unaltered() -> None:
     store = TraceStore()
     client = _record(store)
-    assert [frame.kind for frame in client.received] == ["text", "text", "bytes", "close"]
+    assert [frame.kind for frame in client.received] == ["text", "text", "text", "bytes", "close"]
     assert client.received[0].text == '{"caption": "a person is ahead"}'
-    assert client.received[2].data == b"\x01\x02\x03raw"
+    assert client.received[3].data == b"\x01\x02\x03raw"
 
 
 def test_binary_frame_via_blob_no_pickle() -> None:
     store = TraceStore()
     _record(store)
-    binary = store.load_episode(_CTX.episode_id).events[2]
+    binary = store.load_episode(_CTX.episode_id).events[3]
     assert binary.response.blobs  # stored as a content-addressed blob, not inlined
     assert store.get_blob(binary.response.blobs[0]) == b"\x01\x02\x03raw"
 
@@ -115,9 +119,11 @@ def test_faithful_replay_without_upstream() -> None:
     )
     client = _CollectingClient()
     asyncio.run(proxy.replay(client, _CTX, endpoint=_ENDPOINT))
-    # The three recorded captions are served in seq order; the connection ends via close().
-    assert [frame.kind for frame in client.received] == ["text", "text", "bytes"]
-    assert client.received[2].data == b"\x01\x02\x03raw"  # reconstructed from the blob
+    # The recorded captions are served in seq order; the connection ends via close().
+    assert [frame.kind for frame in client.received] == ["text", "text", "text", "bytes"]
+    # BYTE-identical, including JSON whose framing differs from json.dumps defaults.
+    assert [f.text for f in client.received[:3]] == [f.text for f in _CAPTIONS[:3]]
+    assert client.received[3].data == b"\x01\x02\x03raw"  # reconstructed from the blob
     assert client.closed
 
 
@@ -166,12 +172,13 @@ def test_ws_asgi_app_records_and_relays() -> None:
         "websocket.send",
         "websocket.send",
         "websocket.send",
+        "websocket.send",
         "websocket.close",
     ]
     assert sent[1]["text"] == '{"caption": "a person is ahead"}'  # zero-touch relay
-    assert sent[3]["bytes"] == b"\x01\x02\x03raw"
+    assert sent[4]["bytes"] == b"\x01\x02\x03raw"
     events = store.load_episode(_CTX.episode_id).events
-    assert len(events) == 3 and all(e.seam is Seam.SENSOR_TO_CAPTION for e in events)
+    assert len(events) == 4 and all(e.seam is Seam.SENSOR_TO_CAPTION for e in events)
 
 
 def test_ws_replay_asgi_app_serves_recorded_frames() -> None:
@@ -185,6 +192,8 @@ def test_ws_replay_asgi_app_serves_recorded_frames() -> None:
         "websocket.send",
         "websocket.send",
         "websocket.send",
+        "websocket.send",
         "websocket.close",
     ]
-    assert sent[3]["bytes"] == b"\x01\x02\x03raw"  # reconstructed from the blob
+    assert sent[2]["text"] == _CAPTIONS[1].text  # byte-identical compact JSON
+    assert sent[4]["bytes"] == b"\x01\x02\x03raw"  # reconstructed from the blob

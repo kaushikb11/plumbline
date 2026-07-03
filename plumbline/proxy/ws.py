@@ -203,12 +203,11 @@ class AsyncWSProxy:
 
     def _frame_to_response(self, frame: WsFrame) -> Payload:
         if frame.kind == "text":
-            raw = frame.text or ""
-            try:
-                parsed: JSONValue = json.loads(raw)
-            except (json.JSONDecodeError, ValueError):
-                parsed = raw  # non-JSON caption text kept verbatim (degrade, don't crash)
-            return Payload(inline={_WS_TEXT_KEY: parsed})
+            # Stored VERBATIM. Parsing to JSON and re-serializing on replay would
+            # alter the frame's bytes wherever the server's formatting differs from
+            # json.dumps defaults (compact separators, key order), breaking
+            # byte-identical replay. Consumers parse the text themselves.
+            return Payload(inline={_WS_TEXT_KEY: frame.text or ""})
         ref = self._store.put_blob(frame.data or b"", BlobKind.BIN)  # content-addressed, no pickle
         return Payload(inline={_WS_BINARY_KEY: f"blob:{ref.sha256}"}, blobs=(ref,))
 
