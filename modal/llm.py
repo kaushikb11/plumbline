@@ -20,8 +20,10 @@ MODEL = "Qwen/Qwen2.5-3B-Instruct"  # small, tool-calling capable, cheap on an A
 PORT = 8000
 MINUTES = 60
 
+# Unpinned so vLLM's own consistent dependency set is used (an old pin drags in
+# incompatible newer transitive deps). Pin to a known-good vLLM for reproducibility.
 image = modal.Image.debian_slim(python_version="3.12").pip_install(
-    "vllm==0.6.6", "huggingface_hub[hf_transfer]==0.26.2"
+    "vllm", "huggingface_hub[hf_transfer]"
 )
 app = modal.App("plumbline-llm")
 

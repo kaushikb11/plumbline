@@ -19,8 +19,9 @@ MODEL = "Qwen/Qwen2-VL-2B-Instruct"  # small vision-language model, cheap
 PORT = 8000
 MINUTES = 60
 
+# Unpinned so vLLM's own consistent dependency set is used.
 image = modal.Image.debian_slim(python_version="3.12").pip_install(
-    "vllm==0.6.6", "huggingface_hub[hf_transfer]==0.26.2", "qwen-vl-utils==0.0.8"
+    "vllm", "huggingface_hub[hf_transfer]", "qwen-vl-utils"
 )
 app = modal.App("plumbline-vlm")
 
@@ -47,5 +48,6 @@ def serve() -> None:
             "captioner",
             "--max-model-len",
             "8192",
+            "--trust-remote-code",
         ]
     )
