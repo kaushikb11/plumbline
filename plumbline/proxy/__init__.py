@@ -41,10 +41,13 @@ from plumbline.proxy.streaming import (
     split_sse,
     stream_to_payload,
 )
+from plumbline.proxy.tick import BoundaryTickPolicy, TickPolicy
 
 __all__ = [
     "DEFAULT_NORMALIZERS",
     "AnthropicMessagesNormalizer",
+    "BoundaryTickPolicy",
+    "TickPolicy",
     "AsyncHTTPProxy",
     "AsyncTransport",
     "CapturedStream",

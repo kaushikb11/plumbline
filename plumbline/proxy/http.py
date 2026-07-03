@@ -34,6 +34,7 @@ from plumbline.proxy.streaming import (
     payload_to_stream,
     stream_to_payload,
 )
+from plumbline.proxy.tick import _TICK_OVERRIDE_KEY, TickPolicy
 
 _SSE_CONTENT_TYPE = "text/event-stream"
 _JSON_CONTENT_TYPE = "application/json"
@@ -74,6 +75,7 @@ class AsyncHTTPProxy:
         store: TraceStore,
         normalizers: tuple[Normalizer, ...] = DEFAULT_NORMALIZERS,
         episode_metadata: Mapping[str, JSONValue] | None = None,
+        tick_policy: TickPolicy | None = None,
     ) -> None:
         self._transport = transport
         self._recorder = recorder
@@ -82,6 +84,7 @@ class AsyncHTTPProxy:
         self._episode_metadata: Mapping[str, JSONValue] = episode_metadata or {}
         self._opened: set[str] = set()
         self._seq: dict[str, int] = {}
+        self._tick_policy = tick_policy
 
     async def record(self, request: HTTPRequest, ctx: Context) -> HTTPResponse:
         self._ensure_open(ctx.episode_id)
@@ -103,9 +106,24 @@ class AsyncHTTPProxy:
         for data in {**normalized_request.blobs, **response_blobs}.values():
             self._store.put_blob(data, BlobKind.BIN)  # content-addressed (§5.3)
 
+        # An explicit tick override (from the x-plumbline-tick header) wins; else the
+        # tick policy (if set) derives the tick from the seam sequence; else 0.
+        override = ctx.params.get(_TICK_OVERRIDE_KEY)
+        override_int = (
+            override if isinstance(override, int) and not isinstance(override, bool) else None
+        )
+        if self._tick_policy is not None:
+            logical_tick = self._tick_policy.next_tick(normalized_request.seam, override_int)
+        else:
+            logical_tick = override_int if override_int is not None else ctx.logical_tick
+
         # Merge (not either/or): a caller's ctx.params are preserved and the
-        # normalizer's extracted params (temperature, etc.) take precedence.
-        params: dict[str, JSONValue] = {**ctx.params, **normalized_request.params}
+        # normalizer's extracted params (temperature, etc.) take precedence. The
+        # control key is stripped so it never lands in the trace.
+        params: dict[str, JSONValue] = {
+            k: v for k, v in ctx.params.items() if k != _TICK_OVERRIDE_KEY
+        }
+        params.update(normalized_request.params)
         params[_HTTP_STATUS_KEY] = response.status
 
         seq = self._seq[ctx.episode_id]
@@ -115,7 +133,7 @@ class AsyncHTTPProxy:
                 episode_id=ctx.episode_id,
                 seq=seq,  # monotonic call order
                 seam=normalized_request.seam,
-                logical_tick=ctx.logical_tick,  # loop-iteration index from the loop driver (§6)
+                logical_tick=logical_tick,  # from the tick policy / header override (§6)
                 wall_ts=time.time(),
                 request=normalized_request.payload,
                 response=response_payload,

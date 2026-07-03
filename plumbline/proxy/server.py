@@ -25,8 +25,10 @@ from plumbline.core.clock import VirtualClock
 from plumbline.core.interceptor import Context
 from plumbline.core.recorder import Recorder
 from plumbline.core.store import TraceStore
+from plumbline.core.trace import JSONValue
 from plumbline.proxy.http import AsyncHTTPProxy, HTTPRequest, HTTPResponse
 from plumbline.proxy.streaming import CapturedStream, split_sse
+from plumbline.proxy.tick import _TICK_OVERRIDE_KEY
 
 _JSON_CONTENT_TYPE = "application/json"
 
@@ -106,11 +108,16 @@ def make_asgi_app(proxy: AsyncHTTPProxy, *, upstream: str, episode_id: str) -> A
             headers=headers,
             body=await _read_body(receive),
         )
+        # The tick header is an explicit OVERRIDE (carried in params); when absent the
+        # proxy's tick_policy derives the tick from the seam sequence. `None` means
+        # "no override" — distinct from an explicit tick 0.
+        override = _parse_tick(headers.get(_TICK_HEADER))
+        params: dict[str, JSONValue] = {} if override is None else {_TICK_OVERRIDE_KEY: override}
         ctx = Context(
             episode_id=episode_id,
             model_id=None,
-            params={},
-            logical_tick=_parse_tick(headers.get(_TICK_HEADER)),
+            params=params,
+            logical_tick=override if override is not None else 0,
         )
         await _send_response(send, await proxy.record(request, ctx))
 
@@ -153,7 +160,7 @@ def make_replay_asgi_app(store: TraceStore, *, episode_id: str) -> ASGIApp:
             episode_id=episode_id,
             model_id=None,
             params={},
-            logical_tick=_parse_tick(headers.get(_TICK_HEADER)),
+            logical_tick=_parse_tick(headers.get(_TICK_HEADER)) or 0,  # unused on replay
         )
         try:
             response = await proxy.replay(request, ctx)
@@ -169,12 +176,15 @@ def make_replay_asgi_app(store: TraceStore, *, episode_id: str) -> ASGIApp:
     return app
 
 
-def _parse_tick(value: str | None) -> int:
-    """Parse the loop-tick header defensively; a malformed value falls back to 0."""
+def _parse_tick(value: str | None) -> int | None:
+    """Parse the loop-tick header defensively. None = header absent (no override);
+    a malformed value also yields None (fall back to the tick policy)."""
+    if value is None:
+        return None
     try:
-        return int(value) if value is not None else 0
+        return int(value)
     except ValueError:
-        return 0
+        return None
 
 
 async def _read_body(receive: ASGIReceive) -> bytes:
