@@ -17,3 +17,7 @@ venv/
 
 # Trace store output (Section 5.3)
 trace/
+
+# Local recorded trace stores (episodes are data, not source)
+traces*/
+*-store/
