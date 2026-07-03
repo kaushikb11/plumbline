@@ -15,6 +15,21 @@ from typing import Protocol
 from plumbline.core.seam import Seam
 from plumbline.core.trace import JSONValue, Payload
 
+# BusSample is a transport concept; it lives in transport/ to keep the tap from
+# importing upward into adapters. Re-exported here so `from plumbline.adapters.base
+# import BusSample` still resolves (it is part of the adapter-facing bus surface).
+from plumbline.transport.bus import BusSample
+
+__all__ = [
+    "Action",
+    "ActionSchema",
+    "Adapter",
+    "BusSample",
+    "BusTap",
+    "ClockHook",
+    "ProxyConfig",
+]
+
 
 @dataclass(frozen=True)
 class ProxyConfig:
@@ -36,22 +51,6 @@ class Action:
     kind: str  # "move" | "skill" | "speak" | "express"
     name: str  # e.g. "move", "shake paw"
     args: Mapping[str, JSONValue]
-
-
-@dataclass(frozen=True)
-class BusSample:
-    """One message observed on the runtime's bus (e.g. a Zenoh sample).
-
-    `payload` is the decoded semantic view (adapter decoder / JSON / text
-    fallback); `raw` carries the exact wire bytes so the recorder can store them
-    content-addressed — the decoded view is for comparison, the bytes are the
-    ground truth (additive field; None for producers without a byte-level wire).
-    """
-
-    key_expr: str
-    payload: JSONValue
-    wall_ts: float
-    raw: bytes | None = None
 
 
 class BusTap(Protocol):

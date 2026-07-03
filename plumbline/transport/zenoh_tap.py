@@ -16,8 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from plumbline.adapters.base import BusSample
 from plumbline.core.trace import JSONValue
+from plumbline.transport.bus import BusSample
 
 
 class ZenohSample(Protocol):
