@@ -260,6 +260,24 @@ def probe(world: str = "maze_world") -> None:
             20,
         ),
         ("gz topics", "timeout 10 ign topic -l | head -30", 20),
+        # Experiment-A feasibility: a real camera frame + ground-truth pose.
+        (
+            "rgb frame shape (15s)",
+            "timeout 15 ros2 topic echo --once /rgb_image --field height && "
+            "timeout 15 ros2 topic echo --once /rgb_image --field width && "
+            "timeout 15 ros2 topic echo --once /rgb_image --field encoding",
+            50,
+        ),
+        (
+            "gz ground-truth pose (10s)",
+            "timeout 10 ign topic -e -t /model/go2/pose -n 1 2>/dev/null | head -12",
+            20,
+        ),
+        (
+            "gz set_pose service (teleport for scene sampling)",
+            "ign service -l | grep set_pose | head -3",
+            20,
+        ),
     ):
         code, out = _sh(f"{_SIM_ENV} && {cmd}", timeout=timeout)
         print(f"--- {name} (exit {code}) ---\n{out[:1200]}\n")
@@ -269,6 +287,159 @@ def probe(world: str = "maze_world") -> None:
         lines = [line for line in log.splitlines() if marker in line][:8]
         print(f"--- sim.log lines containing {marker!r} ---")
         print("\n".join(line[:200] for line in lines) or "(none)")
+
+
+_FRAME_SAVER = """
+import json, sys
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+
+class Saver(Node):
+    def __init__(self, out):
+        super().__init__("plumbline_frame_saver")
+        self.out = out
+        self.done = False
+        self.create_subscription(Image, "/rgb_image", self.on_frame, 1)
+
+    def on_frame(self, msg):
+        if self.done:
+            return
+        with open(self.out + ".raw", "wb") as fh:
+            fh.write(bytes(msg.data))
+        with open(self.out + ".meta.json", "w") as fh:
+            json.dump({"height": msg.height, "width": msg.width,
+                       "encoding": msg.encoding, "step": msg.step}, fh)
+        self.done = True
+
+rclpy.init()
+node = Saver(sys.argv[1])
+for _ in range(20):
+    if node.done:
+        break
+    rclpy.spin_once(node, timeout_sec=1.0)
+node.destroy_node()
+rclpy.shutdown()
+raise SystemExit(0 if node.done else 1)
+"""
+
+
+def _parse_go2_pose(dump: str) -> dict[str, float] | None:
+    """Extract the go2 base pose from an `ign topic -e -t /model/go2/pose` dump
+    (Pose_V text proto: pick the pose block named exactly 'go2', else the first)."""
+    import math
+    import re
+
+    blocks = re.split(r"\npose \{", dump)
+    chosen = None
+    for block in blocks[1:]:
+        if re.search(r'name: "go2"\n', block) or 'value: "go2"' in block:
+            chosen = block
+            break
+    if chosen is None and len(blocks) > 1:
+        chosen = blocks[1]
+    if chosen is None:
+        return None
+    pos = re.search(
+        r"position \{\s*(?:x: ([\-\d.e]+))?\s*(?:y: ([\-\d.e]+))?\s*(?:z: ([\-\d.e]+))?", chosen
+    )
+    ori = re.search(
+        r"orientation \{\s*(?:x: ([\-\d.e]+))?\s*(?:y: ([\-\d.e]+))?"
+        r"\s*(?:z: ([\-\d.e]+))?\s*(?:w: ([\-\d.e]+))?",
+        chosen,
+    )
+    if not pos or not ori:
+        return None
+    px, py, pz = (float(v) if v else 0.0 for v in pos.groups())
+    qx, qy, qz = (float(v) if v else 0.0 for v in ori.groups()[:3])
+    qw = float(ori.group(4)) if ori.group(4) else 1.0
+    yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (qw * qy - qz * qx))))
+    roll = math.atan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy))
+    return {"x": px, "y": py, "z": pz, "yaw": yaw, "pitch": pitch, "roll": roll}
+
+
+@app.function(image=image, gpu="T4", timeout=30 * MINUTES, volumes={"/traces": volume})
+def capture_scenes(poses: str, name: str = "maze-scenes", world: str = "maze_world") -> str:
+    """Capture ground-truth-labeled camera scenes for sim-grounded Experiment A:
+    teleport the robot to each pose (bench/maze_scenes.py output, JSON), let
+    physics settle, record the ACHIEVED pose (gz ground truth — render(G) is
+    recomputed from this locally), and save one fresh RGB frame.
+
+    ⚠️ KNOWN ISSUE (blocks Experiment A): `set_pose` on the champ-controlled
+    quadruped is immediately overridden by the standing controller — the first
+    capture run landed all 12 scenes at spawn (~-0.19,-0.14), pitched ~54° over.
+    A working version must pause physics before the teleport (gz `/world/<w>/
+    control` set_paused=true), set_pose, step, then unpause — OR reset the
+    controllers per scene. Until then the achieved poses are not the requested
+    ones and the frames are unusable. The ground-truth geometry (bench/
+    maze_scenes.py) is independent of this and correct."""
+    import json as json_module
+    import math
+
+    pose_list = json_module.loads(poses)
+    world_path = f"/opt/om1-sim/install/go2_description/share/go2_description/worlds/{world}.sdf"
+    subprocess.Popen(
+        [
+            "bash",
+            "-lc",
+            f"{_SIM_ENV} && ros2 launch go2_sim go2_launch.py gui:=false "
+            f"world:='{world_path} -s --headless-rendering'",
+        ],
+        stdout=open("/tmp/sim.log", "w"),  # noqa: SIM115
+        stderr=subprocess.STDOUT,
+    )
+    for _ in range(60):
+        code, out = _sh(f"{_SIM_ENV} && ros2 topic list", timeout=30)
+        if code == 0 and "/rgb_image" in out:
+            break
+        time.sleep(5)
+    else:
+        raise RuntimeError("sim never published /rgb_image")
+    time.sleep(10)  # let the controller reach standing
+    Path("/tmp/save_frame.py").write_text(_FRAME_SAVER)
+
+    out_dir = Path(f"/traces/{name}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    captured: list[dict[str, object]] = []
+    for pose in pose_list:
+        scene_id = pose["scene_id"]
+        qz, qw = math.sin(pose["yaw"] / 2), math.cos(pose["yaw"] / 2)
+        request = (
+            f'name: "go2", position: {{x: {pose["x"]}, y: {pose["y"]}, z: 0.45}}, '
+            f"orientation: {{z: {qz}, w: {qw}}}"
+        )
+        code, out = _sh(
+            f"{_SIM_ENV} && ign service -s /world/{world}/set_pose "
+            f"--reqtype gz.msgs.Pose --reptype gz.msgs.Boolean --timeout 3000 "
+            f"--req '{request}'",
+            timeout=30,
+        )
+        if code != 0:
+            print(f"{scene_id}: teleport FAILED: {out[:200]}")
+            continue
+        time.sleep(4)  # physics settle under the standing controller
+        code, dump = _sh(
+            f"{_SIM_ENV} && timeout 8 ign topic -e -t /model/go2/pose -n 1", timeout=20
+        )
+        achieved = _parse_go2_pose(dump) if code == 0 else None
+        frame_out = str(out_dir / scene_id)
+        code, out = _sh(
+            f"{_SIM_ENV} && timeout 25 python3 /tmp/save_frame.py {frame_out}", timeout=40
+        )
+        entry: dict[str, object] = {
+            "scene_id": scene_id,
+            "requested": pose,
+            "achieved": achieved,
+            "frame_saved": code == 0,
+        }
+        captured.append(entry)
+        print(f"{scene_id}: frame={'ok' if code == 0 else 'FAIL'} achieved={achieved}")
+    (out_dir / "capture.json").write_text(json_module.dumps(captured, indent=1))
+    volume.commit()
+    saved = sum(1 for entry in captured if entry["frame_saved"])
+    print(f"captured {saved}/{len(pose_list)} scenes -> volume {name}/")
+    return f"{saved}/{len(pose_list)}"
 
 
 @app.function(image=image, gpu="T4", timeout=30 * MINUTES, volumes={"/traces": volume})

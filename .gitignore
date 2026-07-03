@@ -21,3 +21,4 @@ trace/
 # Local recorded trace stores (episodes are data, not source)
 traces*/
 *-store/
+*-poses.json
