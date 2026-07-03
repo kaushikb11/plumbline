@@ -142,26 +142,28 @@ def _scripted_post(actions: "list[str]") -> Callable[[Payload], Payload]:
     return post
 
 
-def test_sigma_and_numerator_measured_at_the_same_golden_size() -> None:
-    # Math-review F1: sigma comes from M//2 split-halves, so the numerator's golden
-    # distribution must also be an M//2 half — comparing the FULL pool against the
-    # candidate while sigma came from halves inflates the floor ~sqrt(2)
-    # (decision.py's own 2N argument) and under-reports real drift.
+def test_drift_is_seed_stable_and_size_matched() -> None:
+    # Math-review F1-redux: sigma and the numerator are both size-M//2 AND averaged
+    # over `trials` half-draws, so `excess` is a stable estimate, not the seed-noise
+    # a single M//2 half produced (which flipped sign between seed=0 and seed=1).
     #
-    # Deterministic knife-edge pin: pool = 24 forwards / 8 stand (75%), candidate =
-    # 11 forwards / 5 stand (69%). The pre-F1 construction computed div=0.0625
-    # against sigma=0.1172 -> excess exactly 0.0 (real drift swallowed); the
-    # size-matched construction flags it.
+    # Pool: 24 "move forwards" / 8 "stand still" (75%). A REAL flip candidate (all
+    # "move back") diverges ~1.0 >> sigma -> large excess, robust across seeds. A
+    # same-distribution candidate sits at the floor -> excess ~ 0.
     store = TraceStore()
-    _record_episode(store, ticks=1)  # one original "move forwards"
+    _record_episode(store, ticks=1)
     sample_recorded_decisions(
         store, EPISODE, _scripted_post(["move forwards"] * 23 + ["stand still"] * 8), n=31
     )
-    candidate = [_tool_response("move forwards")] * 11 + [_tool_response("stand still")] * 5
 
-    drift = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=candidate)
-    assert drift.excess > 0.0  # the pre-F1 construction returned exactly 0.0 here
+    flip = [_tool_response("move back")] * 16
+    e0 = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=flip, seed=0).excess
+    e1 = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=flip, seed=1).excess
+    assert e0 > 0.6 and e1 > 0.6  # a real flip is caught...
+    assert abs(e0 - e1) < 0.05  # ...and the value is seed-stable (the F1-redux fix)
 
-    # And a same-distribution candidate stays under the floor (no false positive).
+    # A same-distribution candidate is not charged as drift, across seeds.
     same = [_tool_response("move forwards")] * 12 + [_tool_response("stand still")] * 4
-    assert recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=same).excess == 0.0
+    s0 = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=same, seed=0).excess
+    s1 = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=same, seed=1).excess
+    assert s0 < 0.1 and s1 < 0.1

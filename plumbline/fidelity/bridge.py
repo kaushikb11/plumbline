@@ -180,26 +180,31 @@ def recorded_decision_drift(
     tick) from the RECORDED decision distribution, corrected by the recorded noise
     floor σ (§7.2): excess = max(0, div − σ).
 
-    σ SIZING (the decision.py:144-164 √2 argument, math-review F1): the recorded
-    pool of M labels is treated as the 2N draw. A seeded half (size M//2) estimates
-    the golden distribution for the numerator, and σ is the split-half
-    self-divergence of the FULL pool — halves of that SAME size M//2 — so the floor
-    is measured at the numerator's golden sample size. Comparing the full pool to
-    the candidate while σ came from M//2-halves would inflate the floor ~√2 and
-    under-report real drift (the flattering direction for a gate). Record
-    n = 2·N samples for size-N semantics. The candidate side's sample size is the
-    caller's, uncorrected (documented asymmetry; see docs/math-review-section7.md).
+    σ SIZING (the decision.py:144-164 √2 argument, math-review F1 + F1-redux): the
+    recorded pool of M labels is treated as the 2N draw. σ is the split-half
+    self-divergence of the pool (E[div(M//2 half, M//2 half)], averaged over
+    `trials` partitions). The numerator is div(M//2 golden half, candidate) —
+    matched to σ's golden sample size — but likewise AVERAGED over `trials` random
+    half-draws, not a single seeded half. (The first F1 fix used one half: its
+    result was dominated by which way that one shuffle fell, so `excess` was
+    seed-noise near threshold — a per-run false positive/negative. Averaging both
+    sides at the same size fixes it.) A single full-pool numerator over an
+    M//2-half σ would inflate the floor ~√2 and under-report drift (flattering). So:
+    record n = 2·N samples for size-N semantics. The candidate side's sample size
+    is the caller's, uncorrected (documented asymmetry; docs/math-review-section7.md).
     """
     pool = recorded_labels(store, episode_id, tick, seam=seam, label_of=label_of)
-    half = len(pool) // 2
-    rng = random.Random(seed ^ 0x5EED)  # independent of self_divergence's partitions
-    shuffled = list(pool)
-    rng.shuffle(shuffled)
-    # Degenerate pools (M < 2) fall back to the full pool; σ is 0 there anyway.
-    numerator_golden = shuffled[:half] if half > 0 else shuffled
     sigma = self_divergence(pool, divergence=divergence, trials=trials, seed=seed)
-    div = divergence(
-        histogram(numerator_golden),
-        histogram([label_of(response) for response in candidate_responses]),
-    )
+    candidate = histogram([label_of(response) for response in candidate_responses])
+    half = len(pool) // 2
+    if half == 0:  # degenerate pool (M < 2): no half to draw; σ is 0 here anyway
+        div = divergence(histogram(pool), candidate)
+    else:
+        rng = random.Random(seed ^ 0x5EED)  # independent of self_divergence's partitions
+        acc = 0.0
+        for _ in range(trials):
+            shuffled = list(pool)
+            rng.shuffle(shuffled)
+            acc += divergence(histogram(shuffled[:half]), candidate)
+        div = acc / trials  # E[div(golden M//2-half, candidate)] — matches σ's sizing
     return DecisionDrift(divergence=div, sigma=sigma, excess=max(0.0, div - sigma))

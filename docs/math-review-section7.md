@@ -32,16 +32,24 @@ The structural cause: the bridge has only one recorded sample set per tick; draw
 
 **Fix options:** (a) document that callers must sample 2N and have `recorded_decision_drift` use disjoint halves for distribution vs floor; (b) apply a √2 correction to the split-half σ; (c) accept and document the leniency. → **Q1.**
 
-**RESOLUTION (applied):** option (a)'s construction — the recorded pool of M labels
-is treated as the 2N draw: a seeded half (size M//2) becomes the numerator's golden
-distribution, and σ is the split-half self-divergence of the full pool (halves of
-the SAME size M//2), so floor and numerator are measured at the same golden sample
-size. Callers wanting size-N semantics record n = 2N. Pinned by
-`tests/test_bridge.py::test_sigma_and_numerator_measured_at_the_same_golden_size`
-(a deterministic knife-edge where the old construction returned excess exactly 0.0
-— drift swallowed — and the fixed one flags it). The candidate-side sample size
-remains uncorrected (matching `decision_stability`'s own convention, where sizes
-match by construction); that residual asymmetry is Q1's remaining question.
+**RESOLUTION (applied, then corrected — F1-redux):** the fix treats the recorded
+pool of M labels as the 2N draw and measures the numerator's golden distribution at
+size M//2 to match σ (also size M//2). **The first fix used a SINGLE seeded M//2
+half for the numerator — which a later review round showed was seed-noise: `excess`
+flipped sign between seed=0 and seed=1, and the original pinning test passed only by
+a seed=0 coincidence (and used a candidate whose divergence was genuinely below the
+floor, so `excess` should have been 0).** Corrected: the numerator is now
+`E[div(M//2 golden half, candidate)]` **averaged over `trials` half-draws**, exactly
+mirroring how σ averages its split-half self-divergence — so both sides are size
+M//2 and both averaged, and the estimate is stable. Pinned by
+`tests/test_bridge.py::test_drift_is_seed_stable_and_size_matched`: a real flip
+candidate scores excess > 0.6 with |e(seed 0) − e(seed 1)| < 0.05 (seed-stability),
+a same-distribution candidate scores < 0.1. Callers wanting size-N semantics record
+n = 2N. The candidate-side sample size remains uncorrected (matching
+`decision_stability`'s convention); that residual asymmetry is Q1's remaining
+question. **Lesson for the reviewer: this is exactly the short-leash §7 math where
+"it typechecks and the test passes" did not mean "it measures the right thing" —
+twice.**
 
 ### F2. `bridge.default_decision_label` claims "lossless" but is lossy
 
