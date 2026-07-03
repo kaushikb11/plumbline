@@ -10,6 +10,14 @@ can flatter the metric; they are surfaced (not hidden) in `metrics.py` and
 `judge.py` and require human review.
 """
 
+from plumbline.fidelity.bridge import (
+    default_decision_label,
+    recorded_decision_drift,
+    recorded_distribution,
+    recorded_labels,
+    sample_recorded_decisions,
+    samples_episode_id,
+)
 from plumbline.fidelity.decision import (
     DeciderFn,
     DecisionLabel,
@@ -42,26 +50,32 @@ from plumbline.fidelity.metrics import (
 )
 
 __all__ = [
-    "DeciderFn",
-    "DecisionDrift",
-    "DecisionLabel",
-    "Distribution",
-    "Divergence",
-    "JudgeModel",
-    "JudgeVerdict",
     "behavioral_equivalence_prompt",
     "canonical_label",
     "caption_loss",
-    "decision_drift",
+    "DeciderFn",
     "decision_distribution",
+    "decision_drift",
     "decision_stability",
+    "DecisionDrift",
+    "DecisionLabel",
+    "default_decision_label",
     "default_salient",
+    "Distribution",
+    "Divergence",
     "fusion_loss",
     "histogram",
     "jensen_shannon",
     "judge_noise_floor",
+    "JudgeModel",
+    "JudgeVerdict",
+    "recorded_decision_drift",
+    "recorded_distribution",
+    "recorded_labels",
     "salient_artifact",
     "sample_labels",
+    "sample_recorded_decisions",
+    "samples_episode_id",
     "self_divergence",
     "semantic_equivalence",
     "structural_equivalence",

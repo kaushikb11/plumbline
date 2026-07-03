@@ -73,10 +73,15 @@ before assuming a headline capability.
 ## Still open
 
 - **Gap 1 residual:** the RTSP video upload and the ASGI websocket server wrapper (above).
-- **Fidelity not wired to *recorded* seams.** `caption_loss`/`decision_drift` take a
-  live decider; the decision gate runs a supplied decider on the counterfactual caption
-  rather than replaying recorded `FUSE_TO_DECIDE` seams. A bridge from replayed decision
-  seams into the metrics is not built.
+- **Fidelity on recorded seams — CLOSED** (`fidelity/bridge.py`): an opt-in
+  post-record pass re-samples each recorded `FUSE_TO_DECIDE` request N times
+  against the same endpoint into a sibling `*.samples` episode (original trace
+  byte-immutable, hot path untouched), giving recorded decision distributions,
+  a measured σ, and `recorded_decision_drift` (excess over σ). Run on the real
+  OM1 episode: σ = 0.000 measured at temperature 0.7, bad-rule divergence 1.000
+  — fully attributable ([results](results-experiment-b-om1.md)). ⚠️ The sampling
+  design and `default_decision_label` binning are §14.5/§14.6 judgment calls
+  flagged for human review.
 - **Physical-action capture is lossy.** The Zenoh tap stores the binary CDR `Twist` via
   `utf-8`-`replace`, not a content-addressed blob; the `DECIDE_TO_ACT` comparison rests
   on the reconstructed tool call, not the bus bytes.

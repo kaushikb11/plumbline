@@ -65,6 +65,22 @@ edit — and:
   semantic actions only — or the σ-anchored `DecisionGate` for captioner swaps —
   sharpens it.
 
+## σ-anchored, from the recorded seams (the fidelity bridge)
+
+The recorded episode's own decision distributions (fidelity bridge, §7: 8 extra
+samples per tick from the same endpoint into the sibling `*.samples` episode —
+360 recorded samples) put a measured noise floor under the drift:
+
+```
+tick 0..9: div=1.000  sigma=0.000  excess=1.000     (mean over ticks: 1.000)
+golden D(tick): {Move("move forwards"): 1.0}
+```
+
+At this context the recorded decider is fully decision-stable despite
+temperature 0.7 (σ = 0.000, measured — not assumed), so the bad rule's total
+variation of 1.000 is **entirely attributable excess**: the strongest possible
+form of "this is regression, not sampling noise."
+
 The in-process, deterministic version of this same demonstration (with the
 σ-anchored decision gate catching a low-surface flip) lives in
 `tests/test_baselines.py` and `tests/test_review_regressions.py`; this page is
