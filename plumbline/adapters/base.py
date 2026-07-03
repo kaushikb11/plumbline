@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from plumbline.core.seam import Seam
-from plumbline.core.trace import JSONValue, Payload
+from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
 
 # BusSample is a transport concept; it lives in transport/ to keep the tap from
 # importing upward into adapters. Re-exported here so `from plumbline.adapters.base
@@ -28,7 +28,43 @@ __all__ = [
     "BusTap",
     "ClockHook",
     "ProxyConfig",
+    "derived_seam_event",
 ]
+
+
+def derived_seam_event(
+    *,
+    seam: Seam,
+    episode_id: str,
+    seq: int,
+    logical_tick: int,
+    request: Payload,
+    response: Payload,
+    wall_ts: float = 0.0,
+) -> SeamEvent:
+    """Build a RECONSTRUCTED (no-model-call) SeamEvent — the shared boilerplate for
+    the CAPTION_TO_FUSE and DECIDE_TO_ACT seams an adapter derives from already-
+    captured payloads (§9). `model_id=None`, `params={}`, digest over the request.
+
+    This is a helper INSIDE `adapters/` — it touches no frozen `core/` interface, so
+    it is not the cross-boundary refactor invariant 6 forbids; it just removes the
+    ~40 lines of identical SeamEvent construction each adapter used to copy. Each
+    adapter keeps its own semantic mapping (what goes in `request`/`response`) and
+    calls this for the construction. A pure function of its inputs, so faithful
+    replay of the derived seam stays byte-identical."""
+    return SeamEvent(
+        episode_id=episode_id,
+        seq=seq,
+        seam=seam,
+        logical_tick=logical_tick,
+        wall_ts=wall_ts,
+        request=request,
+        response=response,
+        model_id=None,
+        params={},
+        request_digest=canonicalize(request).digest,
+        latency_ms=0.0,
+    )
 
 
 @dataclass(frozen=True)

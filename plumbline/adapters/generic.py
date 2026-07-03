@@ -17,9 +17,16 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from plumbline.adapters.base import Action, ActionSchema, BusTap, ClockHook, ProxyConfig
+from plumbline.adapters.base import (
+    Action,
+    ActionSchema,
+    BusTap,
+    ClockHook,
+    ProxyConfig,
+    derived_seam_event,
+)
 from plumbline.core.seam import Seam
-from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
+from plumbline.core.trace import JSONValue, Payload, SeamEvent
 from plumbline.proxy.normalizers import contains_image
 
 # A neutral flat action vocabulary (distinct from OM1's typed move/skill/speak).
@@ -135,22 +142,17 @@ class GenericAgentAdapter:
         fused_prompt: JSONValue,
         wall_ts: float = 0.0,
     ) -> SeamEvent:
-        """Derive CAPTION_TO_FUSE (no model call at this seam) — same mechanism as
-        OM1; kept per-adapter (invariant 6: no cross-boundary refactor for this slice)."""
-        request = Payload(inline={"captions": list(captions)})
-        response = Payload(inline={"fused_prompt": fused_prompt})
-        return SeamEvent(
+        """Derive CAPTION_TO_FUSE (no model call at this seam) — same mechanism as OM1,
+        via the shared `derived_seam_event` helper (a helper inside adapters/, no
+        cross-core-boundary refactor)."""
+        return derived_seam_event(
+            seam=Seam.CAPTION_TO_FUSE,
             episode_id=episode_id,
             seq=seq,
-            seam=Seam.CAPTION_TO_FUSE,
             logical_tick=logical_tick,
+            request=Payload(inline={"captions": list(captions)}),
+            response=Payload(inline={"fused_prompt": fused_prompt}),
             wall_ts=wall_ts,
-            request=request,
-            response=response,
-            model_id=None,
-            params={},
-            request_digest=canonicalize(request).digest,
-            latency_ms=0.0,
         )
 
     def reconstruct_decide_to_act(
@@ -170,20 +172,14 @@ class GenericAgentAdapter:
         downstream served seam (CAPTION_TO_FUSE) — no stale derived action is served
         past a divergence (invariant 5, §6). Raises `MalformedDecision` if the decide
         response has no extractable action."""
-        request = Payload(inline={"action": _decided_action(decision_response)})
-        response = Payload(inline={"dispatched": True})
-        return SeamEvent(
+        return derived_seam_event(
+            seam=Seam.DECIDE_TO_ACT,
             episode_id=episode_id,
             seq=seq,
-            seam=Seam.DECIDE_TO_ACT,
             logical_tick=logical_tick,
+            request=Payload(inline={"action": _decided_action(decision_response)}),
+            response=Payload(inline={"dispatched": True}),
             wall_ts=wall_ts,
-            request=request,
-            response=response,
-            model_id=None,
-            params={},
-            request_digest=canonicalize(request).digest,
-            latency_ms=0.0,
         )
 
 

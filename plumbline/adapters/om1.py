@@ -36,9 +36,10 @@ from plumbline.adapters.base import (
     BusTap,
     ClockHook,
     ProxyConfig,
+    derived_seam_event,
 )
 from plumbline.core.seam import Seam
-from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
+from plumbline.core.trace import JSONValue, Payload, SeamEvent
 from plumbline.proxy.normalizers import contains_image
 from plumbline.transport.zenoh_tap import ZenohSession, ZenohTap
 
@@ -161,20 +162,14 @@ class OM1Adapter:
         """Reconstruct CAPTION_TO_FUSE by associating the tick's captions (VLM
         responses) with the subsequent fused prompt (Cortex request) (§9.2). No model
         call at this seam, so the event is derived from already-captured payloads."""
-        request = Payload(inline={"captions": list(captions)})
-        response = Payload(inline={"fused_prompt": fused_prompt})
-        return SeamEvent(
+        return derived_seam_event(
+            seam=Seam.CAPTION_TO_FUSE,
             episode_id=episode_id,
             seq=seq,
-            seam=Seam.CAPTION_TO_FUSE,
             logical_tick=logical_tick,
+            request=Payload(inline={"captions": list(captions)}),
+            response=Payload(inline={"fused_prompt": fused_prompt}),
             wall_ts=wall_ts,
-            request=request,
-            response=response,
-            model_id=None,
-            params={},
-            request_digest=canonicalize(request).digest,
-            latency_ms=0.0,
         )
 
     def reconstruct_decide_to_act(
@@ -193,20 +188,14 @@ class OM1Adapter:
         replay is byte-identical."""
         calls = _tool_calls(decision_response.inline)
         actions: list[JSONValue] = [{"function": name, "args": dict(args)} for name, args in calls]
-        request = Payload(inline={"actions": actions})
-        response = Payload(inline={"dispatched": True})
-        return SeamEvent(
+        return derived_seam_event(
+            seam=Seam.DECIDE_TO_ACT,
             episode_id=episode_id,
             seq=seq,
-            seam=Seam.DECIDE_TO_ACT,
             logical_tick=logical_tick,
+            request=Payload(inline={"actions": actions}),
+            response=Payload(inline={"dispatched": True}),
             wall_ts=wall_ts,
-            request=request,
-            response=response,
-            model_id=None,
-            params={},
-            request_digest=canonicalize(request).digest,
-            latency_ms=0.0,
         )
 
     def _is_action_endpoint(self, endpoint: str) -> bool:
