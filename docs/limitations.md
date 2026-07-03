@@ -41,14 +41,15 @@ before assuming a headline capability.
 
 ## Gaps closed (the four red items are now addressed)
 
-1. **WebSocket caption capture — CORE CLOSED (residual: RTSP + ASGI wrapper).**
+1. **WebSocket caption capture — CLOSED (residual: RTSP video upload only).**
    `proxy/ws.py` (`AsyncWSProxy` + injected `WsTransport`/`WsConnection`) captures OM1's
    WS caption/transcript RESULT stream: each inbound frame is a `SENSOR_TO_CAPTION`
    event, faithfully replayable in seq order, relayed zero-touch, binary via the blob
-   path (no pickle), tested with fakes. **Residual (still open):** the ASGI
-   websocket-scope server wrapper + a concrete `websockets` transport (thin deployment
-   glue), and the RTSP video *upload* (`VLMGeminiRTSP` media ingest — a separate media
-   transport, not a text-result stream).
+   path (no pickle). The ASGI websocket-scope server (`make_ws_asgi_app` /
+   `make_ws_replay_asgi_app`) + a concrete `WebsocketsTransport` ship in `proxy/server.py`,
+   tested with fakes; `modal/ws_captions.py` is a real WS server to exercise it against.
+   **Residual (still open):** the RTSP video *upload* (`VLMGeminiRTSP` media ingest — a
+   separate media transport, not a text-result stream).
 2. **Tick source — CLOSED.** `proxy/tick.py::BoundaryTickPolicy` auto-advances
    `logical_tick` on the perception-boundary seam, so an out-of-process runtime needs no
    header; the header stays as an explicit override. Wired into `AsyncHTTPProxy` and the
@@ -80,6 +81,15 @@ before assuming a headline capability.
 - **The OM1 adapter is verified against OM1's source, not a running episode** (WS5
   definition-of-done unmet; needs Ubuntu+ROS2+Gazebo); three interface facts stay
   `UNVERIFIED` (see [om1-integration.md](om1-integration.md)).
+
+## Testing without a robot
+
+A cloud GPU account (e.g. Modal) validates most of Plumbline against **real,
+nondeterministic models** — no robot, no sim. See [modal/README.md](../modal/README.md):
+Tier 1 serves an OpenAI-compatible LLM + VLM and proves faithful replay is byte-identical
+against real temperature>0 models (`examples/modal_validate.py`); Tier 2 exercises the WS
+capture against a real WS server; Tier 3 (stretch) runs OM1 + Gazebo headless for the
+run-verified episode.
 
 ## Net
 

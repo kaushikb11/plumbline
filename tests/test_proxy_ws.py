@@ -119,3 +119,72 @@ def test_faithful_replay_without_upstream() -> None:
     assert [frame.kind for frame in client.received] == ["text", "text", "bytes"]
     assert client.received[2].data == b"\x01\x02\x03raw"  # reconstructed from the blob
     assert client.closed
+
+
+# --- ASGI websocket server (make_ws_asgi_app / make_ws_replay_asgi_app) ------
+
+from typing import Any  # noqa: E402
+
+from plumbline.proxy.server import ASGIApp, make_ws_asgi_app, make_ws_replay_asgi_app  # noqa: E402
+
+
+async def _drive(app: ASGIApp, receive: Any, send: Any) -> None:
+    await app({"type": "websocket", "path": _ENDPOINT}, receive, send)
+
+
+def _asgi_driver() -> tuple[list[dict[str, Any]], Any]:
+    """A fake ASGI websocket channel: receive yields the connect handshake then
+    blocks (the runtime pushes nothing); send collects outgoing messages."""
+    sent: list[dict[str, Any]] = []
+    queue: list[dict[str, Any]] = [{"type": "websocket.connect"}]
+
+    async def receive() -> dict[str, Any]:
+        if queue:
+            return queue.pop(0)
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    return sent, (receive, send)
+
+
+def test_ws_asgi_app_records_and_relays() -> None:
+    store = TraceStore()
+    recorder = Recorder(store, VirtualClock())
+    proxy = AsyncWSProxy(
+        transport=_FakeTransport(_ScriptedUpstream(_CAPTIONS)), recorder=recorder, store=store
+    )
+    app = make_ws_asgi_app(proxy, upstream=_URL, episode_id=_CTX.episode_id)
+    sent, (receive, send) = _asgi_driver()
+    asyncio.run(_drive(app, receive, send))
+    recorder.close_episode(_CTX.episode_id)
+
+    assert [m["type"] for m in sent] == [
+        "websocket.accept",
+        "websocket.send",
+        "websocket.send",
+        "websocket.send",
+        "websocket.close",
+    ]
+    assert sent[1]["text"] == '{"caption": "a person is ahead"}'  # zero-touch relay
+    assert sent[3]["bytes"] == b"\x01\x02\x03raw"
+    events = store.load_episode(_CTX.episode_id).events
+    assert len(events) == 3 and all(e.seam is Seam.SENSOR_TO_CAPTION for e in events)
+
+
+def test_ws_replay_asgi_app_serves_recorded_frames() -> None:
+    store = TraceStore()
+    _record(store)  # populate the episode
+    app = make_ws_replay_asgi_app(store, episode_id=_CTX.episode_id)
+    sent, (receive, send) = _asgi_driver()
+    asyncio.run(_drive(app, receive, send))
+    assert [m["type"] for m in sent] == [
+        "websocket.accept",
+        "websocket.send",
+        "websocket.send",
+        "websocket.send",
+        "websocket.close",
+    ]
+    assert sent[3]["bytes"] == b"\x01\x02\x03raw"  # reconstructed from the blob

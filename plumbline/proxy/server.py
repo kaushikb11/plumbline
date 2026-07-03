@@ -16,7 +16,7 @@ Requires the optional `httpx` dependency:  pip install "plumbline[proxy]".
 The rest of `plumbline.proxy` does not import httpx, so the core stays light.
 """
 
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any
 
 import httpx
@@ -24,11 +24,13 @@ import httpx
 from plumbline.core.clock import VirtualClock
 from plumbline.core.interceptor import Context
 from plumbline.core.recorder import Recorder
+from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
 from plumbline.core.trace import JSONValue
 from plumbline.proxy.http import AsyncHTTPProxy, HTTPRequest, HTTPResponse
 from plumbline.proxy.streaming import CapturedStream, split_sse
 from plumbline.proxy.tick import _TICK_OVERRIDE_KEY
+from plumbline.proxy.ws import AsyncWSProxy, WsConnection, WsFrame, _NoUpstreamWsTransport
 
 _JSON_CONTENT_TYPE = "application/json"
 
@@ -222,3 +224,141 @@ async def _send_response(send: ASGISend, response: HTTPResponse) -> None:
             await send(body)
     else:
         await send({"type": "http.response.body", "body": response.body})
+
+
+# --- WebSocket server (§4.2; limitations gap #1) ----------------------------
+
+
+class _ASGIClientSocket:
+    """Adapts an ASGI websocket (receive/send) to the WsConnection protocol. The
+    connect handshake (accept) is done by the app before this wraps the channel."""
+
+    def __init__(self, receive: ASGIReceive, send: ASGISend) -> None:
+        self._receive = receive
+        self._send = send
+
+    async def send(self, frame: WsFrame) -> None:
+        if frame.kind == "text":
+            await self._send({"type": "websocket.send", "text": frame.text})
+        elif frame.kind == "bytes":
+            await self._send({"type": "websocket.send", "bytes": frame.data})
+        else:
+            await self._send({"type": "websocket.close", "code": frame.code or 1000})
+
+    async def recv(self) -> WsFrame:
+        message = await self._receive()
+        if message["type"] == "websocket.receive":
+            text = message.get("text")
+            if text is not None:
+                return WsFrame(kind="text", text=text)
+            return WsFrame(kind="bytes", data=message.get("bytes") or b"")
+        return WsFrame(kind="close", code=message.get("code", 1000))  # websocket.disconnect
+
+    async def close(self, code: int = 1000) -> None:
+        await self._send({"type": "websocket.close", "code": code})
+
+
+class WebsocketsTransport:  # pragma: no cover - thin `websockets` wrapper
+    """Concrete WsTransport: dials an upstream WS via the `websockets` library
+    (lazily imported, the only place it is used — keeps it an optional dep)."""
+
+    async def connect(
+        self, url: str, *, subprotocols: Sequence[str], headers: Mapping[str, str]
+    ) -> WsConnection:
+        import websockets  # type: ignore[import-not-found]
+
+        connection = await websockets.connect(
+            url, subprotocols=list(subprotocols) or None, additional_headers=dict(headers)
+        )
+        return _WebsocketsConnection(connection)
+
+
+class _WebsocketsConnection:  # pragma: no cover - thin `websockets` wrapper
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    async def send(self, frame: WsFrame) -> None:
+        if frame.kind == "text":
+            await self._connection.send(frame.text)
+        elif frame.kind == "bytes":
+            await self._connection.send(frame.data)
+        else:
+            await self._connection.close(frame.code or 1000)
+
+    async def recv(self) -> WsFrame:
+        try:
+            message = await self._connection.recv()
+        except Exception:
+            return WsFrame(kind="close", code=1000)
+        if isinstance(message, str):
+            return WsFrame(kind="text", text=message)
+        return WsFrame(kind="bytes", data=message)
+
+    async def close(self, code: int = 1000) -> None:
+        await self._connection.close(code)
+
+
+async def _accept_ws(receive: ASGIReceive, send: ASGISend) -> None:
+    await receive()  # websocket.connect
+    await send({"type": "websocket.accept"})
+
+
+def make_ws_asgi_app(
+    proxy: AsyncWSProxy,
+    *,
+    upstream: str,
+    episode_id: str,
+    seam: Seam = Seam.SENSOR_TO_CAPTION,
+    model_id: str | None = None,
+) -> ASGIApp:
+    """Record a WebSocket: accept the client, then relay to/from `upstream` while
+    capturing each frame (§4.2). Non-websocket scopes are ignored."""
+
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        if scope.get("type") != "websocket":
+            return
+        await _accept_ws(receive, send)
+        client = _ASGIClientSocket(receive, send)
+        ctx = Context(episode_id=episode_id, model_id=None, params={}, logical_tick=0)
+        await proxy.record(
+            client,
+            ctx,
+            upstream_url=upstream,
+            endpoint=scope.get("path", ""),
+            seam=seam,
+            model_id=model_id,
+        )
+
+    return app
+
+
+def make_ws_replay_asgi_app(
+    store: TraceStore, *, episode_id: str, seam: Seam = Seam.SENSOR_TO_CAPTION
+) -> ASGIApp:
+    """Replay a recorded WebSocket caption stream to the client; never connects
+    upstream (`_NoUpstreamWsTransport`)."""
+    proxy = AsyncWSProxy(
+        transport=_NoUpstreamWsTransport(), recorder=Recorder(store, VirtualClock()), store=store
+    )
+
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        if scope.get("type") != "websocket":
+            return
+        await _accept_ws(receive, send)
+        client = _ASGIClientSocket(receive, send)
+        ctx = Context(episode_id=episode_id, model_id=None, params={}, logical_tick=0)
+        await proxy.replay(client, ctx, endpoint=scope.get("path", ""), seam=seam)
+
+    return app
+
+
+def make_dispatch_asgi_app(*, http: ASGIApp, ws: ASGIApp) -> ASGIApp:
+    """One ASGI app that routes http scopes to `http` and websocket scopes to `ws`."""
+
+    async def app(scope: ASGIScope, receive: ASGIReceive, send: ASGISend) -> None:
+        if scope.get("type") == "websocket":
+            await ws(scope, receive, send)
+        else:
+            await http(scope, receive, send)
+
+    return app
