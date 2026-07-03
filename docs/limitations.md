@@ -47,7 +47,9 @@ before assuming a headline capability.
    event, faithfully replayable in seq order, relayed zero-touch, binary via the blob
    path (no pickle). The ASGI websocket-scope server (`make_ws_asgi_app` /
    `make_ws_replay_asgi_app`) + a concrete `WebsocketsTransport` ship in `proxy/server.py`,
-   tested with fakes; `modal/ws_captions.py` is a real WS server to exercise it against.
+   tested with fakes AND validated against a real remote WS server
+   (`examples/modal_ws_validate.py` vs `modal/ws_captions.py` — byte-identical replay
+   PASS; the real run caught a re-serialization bug the fakes missed).
    **Residual (still open):** the RTSP video *upload* (`VLMGeminiRTSP` media ingest — a
    separate media transport, not a text-result stream).
 2. **Tick source — CLOSED.** `proxy/tick.py::BoundaryTickPolicy` auto-advances
@@ -85,10 +87,13 @@ before assuming a headline capability.
 ## Testing without a robot
 
 A cloud GPU account (e.g. Modal) validates most of Plumbline against **real,
-nondeterministic models** — no robot, no sim. See [modal/README.md](../modal/README.md):
-Tier 1 serves an OpenAI-compatible LLM + VLM and proves faithful replay is byte-identical
-against real temperature>0 models (`examples/modal_validate.py`); Tier 2 exercises the WS
-capture against a real WS server; Tier 3 (stretch) runs OM1 + Gazebo headless for the
+nondeterministic models** — no robot, no sim. See [modal/README.md](../modal/README.md).
+Tiers 1 and 2 have been **run and pass**: Tier 1 serves an OpenAI-compatible LLM + VLM
+(vLLM on A10G) and `examples/modal_validate.py` proves faithful replay byte-identical
+against real temperature-0.7 models — and Experiment C replicated on the same endpoints
+with exact wide/narrow separation ([results](results-experiment-c.md)). Tier 2
+(`examples/modal_ws_validate.py`) proves byte-identical WS caption replay against a real
+remote WS server. Tier 3 (stretch, not yet run) runs OM1 + Gazebo headless for the
 run-verified episode.
 
 ## Net
