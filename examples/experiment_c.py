@@ -15,7 +15,13 @@ Requires an Ollama server plus pillow + httpx:
     python examples/experiment_c.py
 
 Override the endpoint/models with PLUMBLINE_OLLAMA_URL / PLUMBLINE_VLM /
-PLUMBLINE_DECIDER. Ground truth is the dataset labels (render(G)), not the sim.
+PLUMBLINE_DECIDER. For real cloud models, point the captioner and decider at separate
+endpoints — e.g. Modal (modal/README.md):
+
+    PLUMBLINE_VLM_URL=<vlm url>/v1 PLUMBLINE_VLM=captioner \\
+    PLUMBLINE_LLM_URL=<llm url>/v1 PLUMBLINE_DECIDER=cortex python examples/experiment_c.py
+
+Ground truth is the dataset labels (render(G)), not the sim.
 """
 
 import base64
@@ -28,6 +34,11 @@ from plumbline.bench.leaderboard import CaptionerSpec, LabeledScene, run_caption
 from plumbline.bench.openai_client import chat_captioner, chat_decider
 
 BASE_URL = os.environ.get("PLUMBLINE_OLLAMA_URL", "http://localhost:11434/v1")
+# The captioner (VLM) and decider (LLM) can live at separate OpenAI-compatible
+# endpoints — e.g. two Modal deployments (modal/vlm.py, modal/llm.py). Both default to
+# BASE_URL so a single local Ollama still works unchanged.
+VLM_URL = os.environ.get("PLUMBLINE_VLM_URL", BASE_URL)
+LLM_URL = os.environ.get("PLUMBLINE_LLM_URL", BASE_URL)
 VLM = os.environ.get("PLUMBLINE_VLM", "moondream")
 DECIDER = os.environ.get("PLUMBLINE_DECIDER", "llama3.2:1b")
 PROMPT = (
@@ -85,13 +96,13 @@ def narrow_fov(scene: LabeledScene, frac: float = 0.5) -> LabeledScene:
 def main() -> None:
     scenes = build_scenes()
     client = httpx.Client(timeout=180.0)
-    wide = chat_captioner(client, BASE_URL, VLM, instruction=PROMPT)
-    narrow_base = chat_captioner(client, BASE_URL, VLM, instruction=PROMPT)
+    wide = chat_captioner(client, VLM_URL, VLM, instruction=PROMPT)
+    narrow_base = chat_captioner(client, VLM_URL, VLM, instruction=PROMPT)
 
     def narrow(scene: LabeledScene) -> str:
         return narrow_base(narrow_fov(scene))
 
-    decider = chat_decider(client, BASE_URL, DECIDER, temperature=0.2)
+    decider = chat_decider(client, LLM_URL, DECIDER, temperature=0.2)
     board = run_captioner_leaderboard(
         scenes,
         [

@@ -49,9 +49,26 @@ caption stream as `SENSOR_TO_CAPTION` events, faithfully replayable via
 
 ## Tier 3 — real OM1 + Gazebo (stretch)
 
-A custom Modal GPU image — ROS2 + `go2_gazebo_sim` + `zenoh-bridge-ros2dds` + the OM1 Go
-binary pointed at the Modal model URLs, headless EGL rendering, 24 h timeout. This is the
-one thing that makes the OM1 adapter **run-verified** (confirming the three `UNVERIFIED`
-facts in [docs/om1-integration.md](../docs/om1-integration.md)). Heavy and not scaffolded
-here — see [docs/limitations.md](../docs/limitations.md) and
+`modal/gazebo_om1.py` is an **honest skeleton** (⚠️ NOT run/verified) of a custom Modal GPU
+image — ROS2 + `go2_gazebo_sim` + `zenoh-bridge-ros2dds` + the OM1 Go binary pointed at the
+Modal model URLs, headless EGL, up-to-24 h timeout. This is the one thing that makes the OM1
+adapter **run-verified** (confirming the three `UNVERIFIED` facts in
+[docs/om1-integration.md](../docs/om1-integration.md)). It maps to the wiring in
 [docs/record-om1-gazebo.md](../docs/record-om1-gazebo.md).
+
+It is a starting point, not a working script — expect to iterate on:
+- **The base image** — the exact ROS2/Gazebo base + how to build the OM1 Go binary and the
+  Go2 sim package (`TODO(UNVERIFIED)` markers in the file).
+- **Headless rendering** — Gazebo needs EGL (`--headless-rendering`, OGRE2) or xvfb; sensor
+  cameras need the GPU.
+- **Real-time on serverless** — a physics sim on a Modal container is untested; watch the
+  function timeout and whether the loop keeps real-time.
+- **The record wiring (steps 3–5)** — start the Plumbline proxy + `RecordingCoordinator` +
+  the `cmd_vel` Zenoh tap, and point OM1's `cortex_llm.config.base_url` at the proxy. The
+  Python is in `docs/record-om1-gazebo.md`; the skeleton sketches where it goes.
+- **The `UNVERIFIED` facts** — the exact `cmd_vel` Zenoh key, the tool-call wire shape, and
+  the OpenMind portal URL. A successful run is what pins them.
+
+If real-time Gazebo on Modal proves impractical, the **software-in-the-loop** middle path
+(run OM1 + Zenoh with a stubbed HAL, no physics) captures a real OM1 episode's model + Zenoh
+action seams at far lower effort — see [docs/limitations.md](../docs/limitations.md).
