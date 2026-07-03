@@ -154,7 +154,7 @@ def main() -> None:
     import httpx
     from plumbline.proxy.server import HttpxTransport
 
-    transport = HttpxTransport(httpx.AsyncClient(timeout=300.0))
+    transport = HttpxTransport(httpx.AsyncClient(timeout=900.0))  # covers GPU cold start
     store = TraceStore()
     episode_id = asyncio.run(
         record_episode(transport, store, vlm_url=vlm_url, llm_url=llm_url, ticks=3)

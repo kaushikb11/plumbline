@@ -20,8 +20,12 @@ PORT = 8000
 MINUTES = 60
 
 # Unpinned so vLLM's own consistent dependency set is used.
-image = modal.Image.debian_slim(python_version="3.12").pip_install(
-    "vllm", "huggingface_hub[hf_transfer]", "qwen-vl-utils"
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install("vllm", "huggingface_hub[hf_transfer]", "qwen-vl-utils")
+    # flashinfer's sampler JIT-compiles at first use and needs nvcc, which
+    # debian_slim lacks; fall back to vLLM's built-in sampling kernels.
+    .env({"VLLM_USE_FLASHINFER_SAMPLER": "0"})
 )
 app = modal.App("plumbline-vlm")
 
