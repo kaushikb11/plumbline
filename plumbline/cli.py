@@ -35,6 +35,10 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from plumbline.recording import ReconstructingAdapter
 
 from plumbline.bench.scenes import build_scenes, write_scenes_json
 from plumbline.core.store import TraceStore
@@ -135,19 +139,49 @@ def _serve(app: object, host: str, port: int) -> None:  # pragma: no cover - thi
     uvicorn.run(app, host=host, port=port)
 
 
-def run_record(upstream: str, store_root: str, episode: str, host: str, port: int) -> int:
+def _build_adapter(name: str) -> "ReconstructingAdapter":
+    from plumbline.adapters.generic import GenericAgentAdapter
+    from plumbline.adapters.om1 import OM1Adapter
+    from plumbline.recording import ReconstructingAdapter
+
+    # Adapters with BOTH reconstruct_* hooks (G1's action schema is a placeholder and
+    # has no reconstruct_decide_to_act yet, so it can't back the coordinator).
+    builders: dict[str, ReconstructingAdapter] = {
+        "om1": OM1Adapter(proxy_base_url=""),
+        "generic": GenericAgentAdapter(proxy_base_url=""),
+    }
+    if name not in builders:
+        raise ValueError(f"unknown adapter {name!r}; choose om1 or generic")
+    return builders[name]
+
+
+def run_record(
+    upstream: str, store_root: str, episode: str, host: str, port: int, adapter: str | None = None
+) -> int:
     import httpx
 
     from plumbline.core.clock import VirtualClock
     from plumbline.core.recorder import Recorder
     from plumbline.proxy.http import AsyncHTTPProxy
     from plumbline.proxy.server import HttpxTransport, make_asgi_app
+    from plumbline.proxy.tick import BoundaryTickPolicy
 
     store = TraceStore(root=store_root)
+    # With --adapter, the RecordingCoordinator reconstructs CAPTION_TO_FUSE +
+    # DECIDE_TO_ACT into a full four-seam episode; otherwise the plain recorder
+    # captures the model seams (now correctly auto-ticked). Both close gap #2.
+    recorder: Recorder
+    if adapter is None:
+        recorder = Recorder(store, VirtualClock())
+    else:
+        from plumbline.recording import RecordingCoordinator
+
+        recorder = RecordingCoordinator(store, episode_id=episode, adapter=_build_adapter(adapter))
     proxy = AsyncHTTPProxy(
         transport=HttpxTransport(httpx.AsyncClient()),
-        recorder=Recorder(store, VirtualClock()),
+        recorder=recorder,
         store=store,
+        tick_policy=BoundaryTickPolicy(),
     )
     app = make_asgi_app(proxy, upstream=upstream, episode_id=episode)
     print(
@@ -177,6 +211,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     record_parser.add_argument("--episode", required=True, help="Episode id to record into")
     record_parser.add_argument("--host", default="127.0.0.1")
     record_parser.add_argument("--port", type=int, default=8900)
+    record_parser.add_argument(
+        "--adapter",
+        choices=("om1", "generic"),
+        default=None,
+        help="Reconstruct a full four-seam episode via this adapter (else model seams only)",
+    )
 
     replay_parser = subparsers.add_parser("replay", help="Run the replaying proxy server (§4.2)")
     replay_parser.add_argument("--store", required=True, help="TraceStore root directory")
@@ -214,7 +254,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "record":
-            return run_record(args.upstream, args.store, args.episode, args.host, args.port)
+            return run_record(
+                args.upstream, args.store, args.episode, args.host, args.port, args.adapter
+            )
         if args.command == "replay":
             return run_replay(args.store, args.episode, args.host, args.port)
         if args.command == "gate":
