@@ -40,11 +40,18 @@ class Action:
 
 @dataclass(frozen=True)
 class BusSample:
-    """One message observed on the runtime's bus (e.g. a Zenoh sample)."""
+    """One message observed on the runtime's bus (e.g. a Zenoh sample).
+
+    `payload` is the decoded semantic view (adapter decoder / JSON / text
+    fallback); `raw` carries the exact wire bytes so the recorder can store them
+    content-addressed — the decoded view is for comparison, the bytes are the
+    ground truth (additive field; None for producers without a byte-level wire).
+    """
 
     key_expr: str
     payload: JSONValue
     wall_ts: float
+    raw: bytes | None = None
 
 
 class BusTap(Protocol):

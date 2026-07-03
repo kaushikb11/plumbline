@@ -38,10 +38,17 @@ class ZenohSession(Protocol):
 
 @dataclass
 class ZenohTap:
-    """A BusTap backed by an injected Zenoh session (§4.3)."""
+    """A BusTap backed by an injected Zenoh session (§4.3).
+
+    `payload_decoder`, when supplied by the adapter, turns known wire formats
+    (e.g. the Go2 CDR Twist on cmd_vel) into a typed JSON view for behavioral
+    comparison; returning None falls through to the generic JSON/text decode.
+    The raw bytes always ride along on the BusSample either way.
+    """
 
     session: ZenohSession
     key_expressions: tuple[str, ...]
+    payload_decoder: Callable[[str, bytes], JSONValue | None] | None = None
     _subscribers: list[object] = field(default_factory=list, init=False, repr=False)
 
     def subscribe(self, on_sample: Callable[[BusSample], None]) -> None:
@@ -62,15 +69,24 @@ class ZenohTap:
         return handle
 
     def _to_bus_sample(self, sample: ZenohSample) -> BusSample:
-        # Action/HAL commands on the bus are often binary (CBOR/protobuf) or plain
-        # text, not JSON. Fall back to a decoded string rather than crashing the
-        # Zenoh subscriber thread (which would drop the sample and can kill the sub).
-        payload: JSONValue
-        if not sample.payload:
-            payload = None
-        else:
-            try:
-                payload = json.loads(sample.payload)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                payload = {"plumbline.raw_bus": bytes(sample.payload).decode("utf-8", "replace")}
-        return BusSample(key_expr=sample.key_expr, payload=payload, wall_ts=time.time())
+        raw = bytes(sample.payload)
+        payload = self._decode(sample.key_expr, raw)
+        return BusSample(key_expr=sample.key_expr, payload=payload, wall_ts=time.time(), raw=raw)
+
+    def _decode(self, key_expr: str, raw: bytes) -> JSONValue:
+        # Semantic view only — the exact bytes ride along as BusSample.raw and are
+        # stored content-addressed by the session. Adapter decoder first (typed wire
+        # formats, e.g. CDR Twist), then JSON, then a text fallback rather than
+        # crashing the Zenoh subscriber thread (which would drop the sample and can
+        # kill the sub).
+        if not raw:
+            return None
+        if self.payload_decoder is not None:
+            decoded = self.payload_decoder(key_expr, raw)
+            if decoded is not None:
+                return decoded
+        try:
+            parsed: JSONValue = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {"plumbline.raw_bus": raw.decode("utf-8", "replace")}
+        return parsed

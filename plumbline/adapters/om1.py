@@ -26,6 +26,7 @@ Zenoh, no sim — examples/record_om1_sil.py; docs/om1-integration.md):
 """
 
 import json
+import struct
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -114,7 +115,11 @@ class OM1Adapter:
         if self.zenoh_session is None:
             return None
         # Action keys only — data-bus telemetry would be mis-recorded as DECIDE_TO_ACT.
-        return ZenohTap(session=self.zenoh_session, key_expressions=self.action_key_expressions)
+        return ZenohTap(
+            session=self.zenoh_session,
+            key_expressions=self.action_key_expressions,
+            payload_decoder=_decode_bus_payload,
+        )
 
     def seam_of(self, request: Payload, endpoint: str) -> Seam:
         """Classify a captured call into a seam (§9.2).
@@ -208,6 +213,34 @@ class OM1Adapter:
         if endpoint.startswith("zenoh:") or "/action" in endpoint:
             return True
         return any(_key_base(key_expr) in endpoint for key_expr in self.action_key_expressions)
+
+
+# geometry_msgs/Twist as OM1's move connector serializes it (cmd_vel.go
+# serializeTwist, RUN-VERIFIED against episode om1-sil-001): 4-byte CDR-LE
+# encapsulation header 00 01 00 00, then 6 float64 LE (linear xyz, angular xyz).
+_TWIST_HEADER = b"\x00\x01\x00\x00"
+_TWIST_LEN = 4 + 6 * 8
+
+
+def decode_cmd_vel_twist(raw: bytes) -> JSONValue | None:
+    """Decode a CDR geometry_msgs/Twist from OM1's cmd_vel wire bytes into a typed
+    view for behavioral comparison (NumericToleranceMatcher-friendly). Returns None
+    if the bytes are not a Twist — the tap then falls back to its generic decode."""
+    if len(raw) != _TWIST_LEN or raw[:4] != _TWIST_HEADER:
+        return None
+    lx, ly, lz, ax, ay, az = struct.unpack_from("<6d", raw, 4)
+    return {
+        "geometry_msgs/Twist": {
+            "linear": {"x": lx, "y": ly, "z": lz},
+            "angular": {"x": ax, "y": ay, "z": az},
+        }
+    }
+
+
+def _decode_bus_payload(key_expr: str, raw: bytes) -> JSONValue | None:
+    if key_expr == "cmd_vel" or key_expr.endswith("/cmd_vel"):
+        return decode_cmd_vel_twist(raw)
+    return None
 
 
 def _tool_calls(inline: JSONValue) -> list[tuple[str, Mapping[str, JSONValue]]]:

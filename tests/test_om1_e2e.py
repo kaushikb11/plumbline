@@ -214,3 +214,21 @@ def test_bus_tap_classifies_cmd_vel_as_action() -> None:
     tap.subscribe(lambda sample: seams.append(adapter.seam_of(Payload(inline={}), sample.key_expr)))
     session.publish(_CMD_VEL_KEY, b"\x00\x01\x00\x00")  # a CDR Twist header, byte payload
     assert seams == [Seam.DECIDE_TO_ACT]
+
+
+def test_decode_cmd_vel_twist_matches_om1_wire_layout() -> None:
+    # Mirror of OM1's serializeTwist (cmd_vel.go): CDR-LE header + 6 float64.
+    import struct
+
+    from plumbline.adapters.om1 import decode_cmd_vel_twist
+
+    raw = b"\x00\x01\x00\x00" + struct.pack("<6d", 0.5, 0.0, 0.0, 0.0, 0.0, -0.3)
+    decoded = decode_cmd_vel_twist(raw)
+    assert decoded == {
+        "geometry_msgs/Twist": {
+            "linear": {"x": 0.5, "y": 0.0, "z": 0.0},
+            "angular": {"x": 0.0, "y": 0.0, "z": -0.3},
+        }
+    }
+    assert decode_cmd_vel_twist(b"\x00\x01\x00\x00short") is None  # not a Twist
+    assert decode_cmd_vel_twist(b"\xff" + raw[1:]) is None  # wrong header

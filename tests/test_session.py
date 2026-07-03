@@ -152,3 +152,54 @@ def test_bus_sample_records_originating_key() -> None:
     session.close()
     event = store.load_episode("ep").events[0]
     assert event.params["plumbline.bus_key"] == "om1/agent/actions/go2"
+
+
+def test_bus_sample_raw_bytes_stored_content_addressed() -> None:
+    # The exact wire bytes are the ground truth: stored as a BIN blob referenced
+    # from the payload (so the digest covers them), while inline stays the decoded
+    # comparison view. Closes the "lossy utf-8 stand-in" limitation.
+    store = TraceStore()
+    session = RecordingSession(store, episode_id="ep", metadata={})
+    session.open()
+    raw = b"\x00\x01\x00\x00" + bytes(range(48))
+    session.record_bus_sample(
+        BusSample(key_expr="cmd_vel", payload={"decoded": "view"}, wall_ts=0.0, raw=raw)
+    )
+    session.close()
+    event = store.load_episode("ep").events[0]
+    assert event.request.inline == {"decoded": "view"}
+    assert event.request.blobs and store.get_blob(event.request.blobs[0]) == raw
+
+    # Identical decoded views with different bytes must NOT collapse to one digest.
+    other = RecordingSession(store, episode_id="ep2", metadata={})
+    other.open()
+    other.record_bus_sample(
+        BusSample(key_expr="cmd_vel", payload={"decoded": "view"}, wall_ts=0.0, raw=raw + b"!")
+    )
+    other.close()
+    assert store.load_episode("ep2").events[0].request_digest != event.request_digest
+
+
+def test_om1_tap_decodes_cmd_vel_twist_and_keeps_raw_bytes() -> None:
+    # The adapter-supplied decoder turns the CDR Twist into a typed comparison view
+    # while the exact wire bytes land in a content-addressed blob.
+    import struct
+
+    store = TraceStore()
+    session = RecordingSession(store, episode_id="ep", metadata={})
+    session.open()
+    zenoh = _FakeZenohSession()
+    adapter = OM1Adapter(proxy_base_url="http://localhost:8900", zenoh_session=zenoh)
+    tap = adapter.bus_tap()
+    assert tap is not None
+    tap.subscribe(session.record_bus_sample)
+
+    raw = b"\x00\x01\x00\x00" + struct.pack("<6d", 0.5, 0.0, 0.0, 0.0, 0.0, 0.0)
+    zenoh.publish("cmd_vel", raw)
+    session.close()
+
+    event = store.load_episode("ep").events[0]
+    inline = event.request.inline
+    assert isinstance(inline, dict) and "geometry_msgs/Twist" in inline
+    assert event.params["plumbline.bus_key"] == "cmd_vel"
+    assert event.request.blobs and store.get_blob(event.request.blobs[0]) == raw

@@ -44,7 +44,14 @@ from plumbline.core.interceptor import Context
 from plumbline.core.recorder import Recorder
 from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
-from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
+from plumbline.core.trace import (
+    BlobKind,
+    BlobRef,
+    JSONValue,
+    Payload,
+    SeamEvent,
+    canonicalize,
+)
 
 
 class RecordingSession(Recorder):
@@ -136,7 +143,14 @@ class RecordingSession(Recorder):
     def record_bus_sample(self, sample: BusSample, *, seam: Seam = Seam.DECIDE_TO_ACT) -> None:
         """Record an observed bus message (an action plan) as a seam event —
         wire this to `BusTap.subscribe` (§4.3)."""
-        request = Payload(inline=sample.payload)
+        # The exact wire bytes, when available, are stored content-addressed and
+        # referenced from the payload — so the digest (identity) covers the true
+        # bytes, while `inline` stays the decoded view used for behavioral
+        # comparison. No more lossy utf-8 stand-in for binary bus traffic.
+        blobs: tuple[BlobRef, ...] = ()
+        if sample.raw is not None:
+            blobs = (self._store.put_blob(sample.raw, BlobKind.BIN),)
+        request = Payload(inline=sample.payload, blobs=blobs)
         self.record(
             SeamEvent(
                 episode_id=self._episode_id,
