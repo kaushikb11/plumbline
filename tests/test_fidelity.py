@@ -105,3 +105,16 @@ def test_fusion_loss_flags_dropped_task_relevant_caption() -> None:
 
     # A caption that would not change the decision contributes no loss.
     assert fusion_loss(_probe, fused, ["the weather is sunny"], 32) == 0.0
+
+
+def test_decision_drift_flip_and_preserved() -> None:
+    from plumbline.fidelity import decision_drift
+
+    flip = decision_drift(_probe, "obstacle ahead", "clear ahead", 16)
+    assert flip.divergence == 1.0
+    assert flip.sigma == 0.0  # deterministic probe -> zero noise floor
+    assert flip.excess == 1.0
+
+    preserved = decision_drift(_probe, "obstacle ahead", "an obstacle just ahead", 16)
+    assert preserved.divergence == 0.0
+    assert preserved.excess == 0.0

@@ -1,6 +1,6 @@
 """Runtime adapters (engineering spec §9). OM1 is the flagship reference."""
 
-from plumbline.adapters.action_matcher import ActionSchemaMatcher
+from plumbline.adapters.action_matcher import ActionSchemaMatcher, recommended_behavior_matcher
 from plumbline.adapters.base import (
     Action,
     ActionSchema,
@@ -29,4 +29,5 @@ __all__ = [
     "OM1ActionSchema",
     "OM1Adapter",
     "ProxyConfig",
+    "recommended_behavior_matcher",
 ]

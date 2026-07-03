@@ -2,6 +2,7 @@
 
 from plumbline.regression.gate import (
     Config,
+    DecisionGate,
     EpisodeDrift,
     FailurePolicy,
     GateResult,
@@ -18,6 +19,7 @@ from plumbline.regression.golden import (
 __all__ = [
     "BehaviorLabel",
     "Config",
+    "DecisionGate",
     "EpisodeDrift",
     "FailurePolicy",
     "GateResult",

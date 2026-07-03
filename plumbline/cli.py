@@ -55,6 +55,7 @@ def run_gate(spec: GateSpec) -> GateResult:
         behavior_matcher=spec.behavior_matcher,
         policy=spec.policy,
         quantile=spec.quantile,
+        decision=spec.decision,
     )
 
 

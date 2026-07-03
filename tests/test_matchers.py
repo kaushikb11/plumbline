@@ -69,7 +69,11 @@ def test_numeric_tolerance_matcher_on_pose_payloads() -> None:
 
 # --- ActionSchemaMatcher (§9.1, §14.6) --------------------------------------
 
-from plumbline.adapters import ActionSchemaMatcher, GenericActionSchema  # noqa: E402
+from plumbline.adapters import (  # noqa: E402
+    ActionSchemaMatcher,
+    GenericActionSchema,
+    recommended_behavior_matcher,
+)
 from plumbline.core.matcher import ExactMatcher as _Exact  # noqa: E402
 
 
@@ -132,3 +136,35 @@ def test_action_schema_matcher_both_unparseable_match() -> None:
     verdict = matcher.matches(Payload(inline={"nope": 1}), Payload(inline={"other": 2}))
     assert verdict.is_match
     assert verdict.distance == 0.0
+
+
+def test_action_schema_matcher_reorder_tolerance() -> None:
+    schema = GenericActionSchema()
+    plan_ab = Payload(
+        inline={
+            "tool_calls": [
+                {"function": {"name": "move_forward", "arguments": '{"speed": 0.3}'}},
+                {"function": {"name": "turn_left", "arguments": '{"rate": 0.1}'}},
+            ]
+        }
+    )
+    plan_ba = Payload(
+        inline={
+            "tool_calls": [
+                {"function": {"name": "turn_left", "arguments": '{"rate": 0.1}'}},
+                {"function": {"name": "move_forward", "arguments": '{"speed": 0.3}'}},
+            ]
+        }
+    )
+    assert not ActionSchemaMatcher(schema).matches(plan_ab, plan_ba).is_match  # order-sensitive
+    assert recommended_behavior_matcher(schema).matches(plan_ab, plan_ba).is_match  # reorder-ok
+    # A genuinely different multiset still mismatches, even reorder-insensitive.
+    different = Payload(
+        inline={
+            "tool_calls": [
+                {"function": {"name": "turn_left", "arguments": '{"rate": 0.1}'}},
+                {"function": {"name": "back_up", "arguments": '{"speed": 0.2}'}},
+            ]
+        }
+    )
+    assert not recommended_behavior_matcher(schema).matches(plan_ab, different).is_match

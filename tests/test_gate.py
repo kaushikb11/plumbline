@@ -17,7 +17,7 @@ from plumbline.core.recorder import Recorder
 from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
 from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
-from plumbline.regression import Config, FailurePolicy, GoldenSet, gate
+from plumbline.regression import Config, DecisionGate, FailurePolicy, GoldenSet, gate
 
 _SCENES = ("scene_human", "scene_obstacle")
 _CAPTION: Mapping[str, str] = {
@@ -212,3 +212,96 @@ def test_gate_action_schema_matcher_tolerates_numeric_jitter() -> None:
     assert gate(store, golden, config, 0.1).passed is False  # ExactMatcher default -> drift
     tolerant = ActionSchemaMatcher(GenericActionSchema(), atol=1e-2)
     assert gate(store, golden, config, 0.1, behavior_matcher=tolerant).passed is True
+
+
+def _probe(context: str) -> Mapping[str, JSONValue]:
+    return {"action": "avoid" if "obstacle" in context else "advance"}
+
+
+def _obstacle_episode(store: TraceStore, swapped_caption: str) -> Config:
+    golden_caption = "a solid obstacle forty centimeters to the left side of the robot"
+    recorder = Recorder(store, VirtualClock())
+    recorder.open_episode("obs", {})
+    recorder.record(
+        _event(
+            "obs",
+            0,
+            Seam.SENSOR_TO_CAPTION,
+            0,
+            Payload(inline={"scene": "obstacle"}),
+            Payload(inline={"caption": golden_caption}),
+        )
+    )
+    recorder.record(
+        _event(
+            "obs",
+            1,
+            Seam.CAPTION_TO_FUSE,
+            0,
+            Payload(inline={"captions": [golden_caption]}),
+            Payload(inline={"fused_prompt": golden_caption}),
+        )
+    )
+    recorder.record(
+        _event(
+            "obs",
+            2,
+            Seam.FUSE_TO_DECIDE,
+            0,
+            Payload(inline={"prompt": golden_caption}),
+            Payload(inline={"action_plan": _ACTION["scene_obstacle"]}),
+        )
+    )
+    recorder.record(
+        _event(
+            "obs",
+            3,
+            Seam.DECIDE_TO_ACT,
+            0,
+            Payload(inline=_ACTION["scene_obstacle"]),
+            Payload(inline={"executed": True}),
+        )
+    )
+    recorder.close_episode("obs")
+
+    def override(request: Payload) -> Payload:
+        return Payload(inline={"caption": swapped_caption})
+
+    return Config(
+        live_frontier={Seam.SENSOR_TO_CAPTION},
+        overrides={Seam.SENSOR_TO_CAPTION: override},
+        matchers=_matchers(),
+    )
+
+
+def test_decision_gate_catches_low_surface_flip_missed_by_surface_gate() -> None:
+    # THE flagship contrast: a caption that drops the one decision-critical token but
+    # stays surface-close. Same store, same config, opposite verdicts.
+    store = TraceStore()
+    config = _obstacle_episode(
+        store, "a solid clear forty centimeters to the left side of the robot"
+    )
+    golden = GoldenSet(store)
+    golden.add("obs")
+
+    surface = gate(store, golden, config, 0.1)  # surface/structural mode
+    assert surface.passed is True  # MISS: caption within threshold -> old decision served
+    assert surface.max_drift == 0.0
+
+    caught = gate(store, golden, config, 0.1, decision=DecisionGate(_probe, k=3.0))
+    assert caught.passed is False  # CATCH: the decision flips avoid -> advance
+    assert caught.per_episode[0].decision_divergence == 1.0
+    assert caught.per_episode[0].sigma == 0.0
+    assert caught.per_episode[0].divergence_seam is Seam.SENSOR_TO_CAPTION
+    assert caught.threshold_units == "sigma"
+
+
+def test_decision_gate_does_not_flag_a_benign_rephrasing() -> None:
+    store = TraceStore()
+    # keeps "obstacle" (the decision-critical token) -> decision unchanged
+    config = _obstacle_episode(store, "an obstacle sitting forty centimeters to the robot left")
+    golden = GoldenSet(store)
+    golden.add("obs")
+    result = gate(store, golden, config, 0.1, decision=DecisionGate(_probe, k=3.0))
+    assert result.passed is True
+    assert result.per_episode[0].decision_divergence == 0.0

@@ -30,6 +30,7 @@ and require human review before Experiment A/C depend on them:
 """
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 from plumbline.fidelity.decision import (
     DeciderFn,
@@ -75,6 +76,37 @@ def caption_loss(
     d_oracle = decision_distribution(decider, oracle_context, n, label=label)
     sigma = decision_stability(decider, oracle_context, n, label=label, divergence=divergence)
     return max(0.0, divergence(d_caption, d_oracle) - sigma)
+
+
+@dataclass(frozen=True)
+class DecisionDrift:
+    """Decision-space drift between two contexts. `excess` is caption_loss's value;
+    `divergence` and `sigma` are surfaced so a gate can threshold in sigma units."""
+
+    divergence: float  # div(D(candidate), D(golden)), 0..1
+    sigma: float  # the decider's noise floor at the golden context
+    excess: float  # max(0.0, divergence - sigma)
+
+
+def decision_drift(
+    decider: DeciderFn,
+    golden_context: str,
+    candidate_context: str,
+    n: int,
+    *,
+    label: DecisionLabel = canonical_label,
+    divergence: Divergence = total_variation,
+) -> DecisionDrift:
+    """Drift between acting on the golden vs candidate context, beyond the decider's
+    own noise floor (§7.3). `excess` is identical to `caption_loss(decider,
+    candidate_context, golden_context, n, ...)`; this additionally returns the raw
+    divergence and sigma. The decider must be live / temperature-sampling, not a
+    by-digest faithful replay (the REPLAY CAVEAT in fidelity.decision)."""
+    d_candidate = decision_distribution(decider, candidate_context, n, label=label)
+    d_golden = decision_distribution(decider, golden_context, n, label=label)
+    sigma = decision_stability(decider, golden_context, n, label=label, divergence=divergence)
+    div = divergence(d_candidate, d_golden)
+    return DecisionDrift(divergence=div, sigma=sigma, excess=max(0.0, div - sigma))
 
 
 def fusion_loss(

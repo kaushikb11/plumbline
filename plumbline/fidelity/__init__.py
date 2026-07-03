@@ -33,7 +33,9 @@ from plumbline.fidelity.judge import (
     structural_equivalence,
 )
 from plumbline.fidelity.metrics import (
+    DecisionDrift,
     caption_loss,
+    decision_drift,
     default_salient,
     fusion_loss,
     salient_artifact,
@@ -41,6 +43,7 @@ from plumbline.fidelity.metrics import (
 
 __all__ = [
     "DeciderFn",
+    "DecisionDrift",
     "DecisionLabel",
     "Distribution",
     "Divergence",
@@ -49,6 +52,7 @@ __all__ = [
     "behavioral_equivalence_prompt",
     "canonical_label",
     "caption_loss",
+    "decision_drift",
     "decision_distribution",
     "decision_stability",
     "default_salient",
