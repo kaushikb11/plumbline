@@ -9,7 +9,7 @@ from plumbline.core.interceptor import Context
 from plumbline.core.recorder import Recorder
 from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
-from plumbline.core.trace import Payload, SeamEvent, canonicalize
+from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
 from plumbline.proxy.recording import ProxyDivergence, RecordingProxy, ReplayingProxy
 
 _CTX = Context(episode_id="ep", model_id=None, params={}, logical_tick=0)
@@ -135,3 +135,44 @@ def test_faithful_replay_detects_under_consumption() -> None:
     full.faithful(_payload("req-b"), _CTX)
     assert full.unconsumed() == ()
     full.verify_fully_consumed()  # does not raise
+
+
+def test_store_failure_paths_are_clear() -> None:
+    store = TraceStore()
+    # Loading an episode that was never opened: a not-found error (path names it).
+    with pytest.raises(FileNotFoundError):
+        store.load_episode("never-recorded")
+    # Appending/closing an episode the store never opened is a usage error, loud.
+    req = _payload("x")
+    ev = SeamEvent(
+        "ghost", 0, Seam.FUSE_TO_DECIDE, 0, 0.0, req, req, None, {}, canonicalize(req).digest, 0.0
+    )
+    with pytest.raises(KeyError):
+        store.append_event("ghost", ev)
+    with pytest.raises(KeyError):
+        store.close_episode("ghost")
+
+
+def test_non_openai_image_shapes_classify_as_sensor_to_caption() -> None:
+    # The seam classifier must recognize vision content in every provider's encoding,
+    # not just OpenAI's image_url (framework review, normalizer-coverage gap).
+    from plumbline.adapters.om1 import OM1Adapter
+    from plumbline.proxy.normalizers import contains_image
+
+    gemini: JSONValue = {
+        "contents": [{"parts": [{"inlineData": {"mimeType": "image/png", "data": "aGk="}}]}]
+    }
+    gemini_snake: JSONValue = {"contents": [{"parts": [{"inline_data": {"data": "aGk="}}]}]}
+    anthropic: JSONValue = {
+        "messages": [{"content": [{"type": "image", "source": {"data": "aGk="}}]}]
+    }
+    text_only: JSONValue = {"messages": [{"content": [{"type": "text", "text": "no image here"}]}]}
+
+    assert contains_image(gemini) and contains_image(gemini_snake) and contains_image(anthropic)
+    assert not contains_image(text_only)
+
+    adapter = OM1Adapter(proxy_base_url="http://localhost:8900")
+    endpoint = "https://generativelanguage.googleapis.com/v1/models"
+    assert adapter.seam_of(Payload(inline=gemini), endpoint) is Seam.SENSOR_TO_CAPTION
+    assert adapter.seam_of(Payload(inline=anthropic), endpoint) is Seam.SENSOR_TO_CAPTION
+    assert adapter.seam_of(Payload(inline=text_only), endpoint) is Seam.FUSE_TO_DECIDE
