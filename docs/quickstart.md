@@ -4,21 +4,20 @@ This walks the operator flow — **point base URLs at the proxy → record → r
 
 ## 1. Point your runtime at the proxy (zero source changes)
 
-`configure_proxy()` returns the env vars / config fields that redirect each provider's base URL to the Plumbline proxy. No runtime source edits.
+`configure_proxy()` returns the config fields (and/or env vars) that redirect the runtime's model base URL to the Plumbline proxy. No runtime source edits.
 
 ```python
 from plumbline.adapters.om1 import OM1Adapter
 
 cfg = OM1Adapter(proxy_base_url="http://localhost:8900").configure_proxy()
-for name, value in cfg.env.items():
-    print(f"export {name}={value}")
-# export OPENAI_BASE_URL=http://localhost:8900/v1
-# export ANTHROPIC_BASE_URL=http://localhost:8900
-# export OLLAMA_HOST=http://localhost:8900
-# ...
+for path, value in cfg.config_fields.items():
+    print(f"{path} = {value}")
+# cortex_llm.config.base_url = http://localhost:8900/v1
+print("env:", dict(cfg.env))
+# env: {}
 ```
 
-The OpenAI-compatible providers (OpenAI, DeepSeek, xAI) get a `/v1` suffix; Anthropic/Gemini/Ollama take the host base, matching how each SDK builds its path.
+OM1 routes model calls through the **`cortex_llm.config.base_url`** config field (verified against OM1's source — it is *not* per-provider env vars); set that field in OM1's `config/*.json5` and its calls go through Plumbline. Other adapters may instead return `env` entries — a runtime that reads a provider base URL from the environment gets those. Either way it is external config, no source change. (See `docs/om1-integration.md`.)
 
 > The async HTTP proxy that actually terminates these connections (`plumbline.proxy.AsyncHTTPProxy`) takes an **injected** transport — a concrete TLS-terminating reverse server is not shipped yet. The transport-agnostic record/replay *core* below is what the substrate is built on and what the tests exercise.
 

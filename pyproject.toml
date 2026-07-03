@@ -6,11 +6,35 @@ build-backend = "hatchling.build"
 name = "plumbline"
 version = "0.1.0"
 description = "Record-replay and fusion-fidelity evaluation for language-bus robot runtimes."
-readme = "spec/plumbline-project-spec.md"
+readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
+license-files = ["LICENSE"]
 authors = [{ name = "Plumbline contributors" }]
+keywords = [
+    "robotics", "record-replay", "determinism", "regression-testing",
+    "llm-agents", "vlm", "multimodal", "reproducibility", "observability", "om1",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
 dependencies = []
+
+# TODO(release): set to the real repo once the host/name is decided (the name
+# "Plumbline" is still a working name and the repo home is undecided — see the
+# open release questions). Placeholder owner below.
+[project.urls]
+Homepage = "https://github.com/kaushikb11/plumbline"
+Repository = "https://github.com/kaushikb11/plumbline"
+Documentation = "https://github.com/kaushikb11/plumbline/tree/main/docs"
+Issues = "https://github.com/kaushikb11/plumbline/issues"
 
 [project.optional-dependencies]
 # The core substrate is dependency-free. The recording HTTP proxy server needs an

@@ -67,9 +67,17 @@ Full numbers, honest noise caveats, and the reproducible script are in **[docs/r
 
 ## Install
 
+Python ≥ 3.12. The **core substrate is dependency-free** — `pip install plumbline` pulls in nothing heavy. Install the extras for what you actually do:
+
 ```bash
-pip install -e ".[dev]"   # Python ≥ 3.12
+pip install -e "."                    # core: seams, trace, matchers, replayer (stdlib only)
+pip install -e ".[proxy]"             # + the record/replay HTTP+WS proxy (httpx, uvicorn, websockets)
+pip install -e ".[proxy,examples]"    # + run the demos (pillow) against a model endpoint
+pip install -e ".[zenoh]"             # + the real Zenoh bus tap for the OM1 adapter
+pip install -e ".[proxy,dev]"         # + contributor tooling (ruff, mypy, pytest)
 ```
+
+The `plumbline record` / `replay` CLI needs the `proxy` extra (uvicorn); the runnable examples need `examples` (pillow). `dev` alone is tooling-only and does **not** pull those in — install `".[proxy,dev]"` to both develop and run the CLI.
 
 ## Quickstart
 
