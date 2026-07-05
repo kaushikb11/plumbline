@@ -1,23 +1,23 @@
 # Quickstart
 
-This walks the operator flow — **point base URLs at the proxy → record → replay → measure fidelity** — using the shipped Python API. Every snippet here runs against the current build (Python ≥ 3.12). The `plumbline record / replay / gate / diff / scenes` CLI (spec §11) and the CI gate (WS4) are implemented and tested; the Python API below is what those subcommands wrap.
+The operator flow, end to end: **point your runtime at the proxy → record → replay → measure fidelity**, with runnable snippets. New to the ideas (the four seams, the record → replay → gate lifecycle)? Read [concepts.md](concepts.md) first — it's the one-page mental model.
 
-If you are new to the concepts (the four seams, the record → replay → gate lifecycle), read [concepts.md](concepts.md) first — it is the one-page mental model.
+Every snippet here runs against the current build (Python ≥ 3.12).
 
 ## 0. Run something green in one command
 
-Before wiring anything, prove the install works. This needs no extras and no network:
+Before wiring anything, prove the install works — no extras, no network:
 
 ```bash
-pip install -e .                          # core only (stdlib); see the Install section of the README for extras
-plumbline gate bench/om1_gazebo_gate.py   # replays a real Go2/Gazebo golden trace and exits 0
+pip install -e .                          # core only (stdlib)
+plumbline gate bench/om1_gazebo_gate.py   # replays a real Go2/Gazebo golden and exits 0
 ```
 
-That gates the committed Gazebo golden episode (`om1-gazebo-maze-003`, 4,095 events): it must replay byte-identically and pass — the same check CI runs on every PR. `plumbline list` shows the episodes on disk. `record` and `replay` (below) run a proxy *server* and additionally need the `proxy` extra (`pip install -e '.[proxy]'`).
+That gates the committed Gazebo golden (`om1-gazebo-maze-003`, 4,095 events): it must replay byte-identically and pass — the same check CI runs on every PR. `plumbline list` shows the episodes on disk. `record` / `replay` (below) run a proxy *server* and additionally need `pip install -e '.[proxy]'`.
 
 ## 1. Point your runtime at the proxy (zero source changes)
 
-`configure_proxy()` returns the config fields (and/or env vars) that redirect the runtime's model base URL to the Plumbline proxy. No runtime source edits.
+You don't edit the runtime — you redirect its model base URL. `configure_proxy()` returns the config fields (and/or env vars) that do it:
 
 ```python
 from plumbline.adapters.om1 import OM1Adapter
@@ -26,17 +26,13 @@ cfg = OM1Adapter(proxy_base_url="http://localhost:8900").configure_proxy()
 for path, value in cfg.config_fields.items():
     print(f"{path} = {value}")
 # cortex_llm.config.base_url = http://localhost:8900/v1
-print("env:", dict(cfg.env))
-# env: {}
 ```
 
-OM1 routes model calls through the **`cortex_llm.config.base_url`** config field (verified against OM1's source — it is *not* per-provider env vars); set that field in OM1's `config/*.json5` and its calls go through Plumbline. Other adapters may instead return `env` entries — a runtime that reads a provider base URL from the environment gets those. Either way it is external config, no source change. (See `docs/om1-integration.md`.)
-
-> The async HTTP proxy that actually terminates these connections (`plumbline.proxy.AsyncHTTPProxy`) takes an **injected** transport — a concrete TLS-terminating reverse server is not shipped yet. The transport-agnostic record/replay *core* below is what the substrate is built on and what the tests exercise.
+OM1 routes model calls through the `cortex_llm.config.base_url` config field (verified against OM1's source — not per-provider env vars); set it in OM1's `config/*.json5` and its calls flow through Plumbline. Other adapters may instead return `env` entries. Either way it's external config — no source change. (See [om1-integration.md](om1-integration.md).)
 
 ## 2. Record an episode
 
-In record mode the proxy forwards each model call to the real upstream, captures it, infers the seam, records a `SeamEvent`, and returns the upstream response **unaltered** (the zero-touch invariant). Here is the in-process core with a stub "model" standing in for the cloud endpoints:
+In record mode the proxy forwards each model call to the real upstream, captures it, infers the seam, records a `SeamEvent`, and returns the response **unaltered** (the zero-touch invariant). Here's the in-process core with a stub standing in for the cloud endpoints:
 
 ```python
 from plumbline.core.clock import VirtualClock
@@ -77,9 +73,7 @@ proxy.close("demo")
 
 ## 3. Replay
 
-### Faithful — bit-identical reproduction
-
-`ReplayingProxy` serves each recorded response back by request digest. Re-drive the same loop and you get the same decisions, with no model calls made:
+**Faithful — bit-identical reproduction.** `ReplayingProxy` serves each recorded response back by request digest. Re-drive the loop and you get the same decisions, with no model calls made:
 
 ```python
 from plumbline.proxy import ReplayingProxy
@@ -90,9 +84,7 @@ served = replay.faithful(Payload(inline={"kind": "caption", "tick": 0}), replay_
 assert served.inline == {"caption": "obstacle 0 m ahead"}   # served from the trace
 ```
 
-### Counterfactual — swap one component, isolated mode
-
-Swap the captioner and let only that seam re-execute; everything downstream is pinned to the trace. If the swap diverges enough that the recorded fused prompt no longer applies, the run **halts** at the first downstream seam and reports the seam and distance — it never serves a stale response past a divergence. A compatible captioner (a paraphrase within the matcher threshold) reproduces without diverging; an incompatible one (disjoint content) halts.
+**Counterfactual — swap one component.** Let only the swapped seam re-execute; everything downstream is pinned to the trace. If the swap diverges enough that the recorded fused prompt no longer applies, the run **halts** at the first downstream seam and reports the seam and distance — it never serves a stale response past a divergence. A compatible captioner (a paraphrase within the matcher threshold) reproduces without diverging; an incompatible one (disjoint content) halts.
 
 ```python
 from plumbline.core.replayer import Replayer, DivergencePolicy
@@ -112,47 +104,49 @@ result = Replayer(store, VirtualClock(), matchers).counterfactual(
     "demo",   # the episode recorded in step 2 above
     live_frontier={Seam.SENSOR_TO_CAPTION},
     overrides={Seam.SENSOR_TO_CAPTION: swapped_captioner},
-    on_divergence=DivergencePolicy.HALT,   # HALT is the recommended policy (invariant 5); it is
-                                           # required — there is no default — and divergence is a result, not an error
+    on_divergence=DivergencePolicy.HALT,   # HALT is the recommended policy; it is required
+                                           # (no default), and divergence is a result, not an error
 )
 # result.diverged (True), result.divergence_seam (FUSE_TO_DECIDE for this two-seam demo
 # episode — it has no derived CAPTION_TO_FUSE), result.divergence_distance
 ```
 
-**Worked, runnable examples:** `tests/test_om1_counterfactual.py` records a full Go2 Gazebo episode end to end; `tests/test_proxy_counterfactual.py` does the same through `RecordingProxy` and asserts both the no-divergence (compatible) and halt (incompatible) cases.
-
-> **Episode shape matters.** `counterfactual` groups seam events by `logical_tick` so a swapped seam is compared against the *same loop iteration's* downstream seam. Stamp `Context.logical_tick` with the loop-iteration index (as in the record step above), so every seam of one iteration shares a tick. Faithful replay (by digest) does not depend on this.
+> **Episode shape matters.** `counterfactual` groups seam events by `logical_tick`, so a swapped seam is compared against the *same loop iteration's* downstream seam — stamp `Context.logical_tick` with the loop index (as in step 2). Faithful replay (by digest) does not depend on this. Fully worked examples: `tests/test_om1_counterfactual.py` (a real Go2 Gazebo episode) and `tests/test_proxy_counterfactual.py` (both the compatible and halt cases through `RecordingProxy`).
 
 ## 4. Measure fidelity
 
-Fidelity is scored on downstream **decision success**, corrected for the decider's own sampling noise — never on caption surface text.
+Fidelity is scored on downstream **decision success**, corrected for the decider's own sampling noise — never on caption surface text:
 
 ```python
-from plumbline.fidelity import caption_loss, fusion_loss, decision_stability, structural_equivalence
+from plumbline.fidelity import caption_loss, decision_stability
 
 # The decision-maker: a context (fused prompt / caption) -> an action plan.
 def decider(context: str) -> dict[str, object]:
     return {"action": "avoid" if "obstacle" in context else "advance", "args": {}}
 
 # Caption fidelity: how much acting on the caption diverges from acting on ground
-# truth (render(G)), beyond the noise floor. render(G) is supplied by the sim (§14.5).
+# truth, beyond the noise floor. The oracle_context (render of ground truth) is
+# supplied by the sim/harness.
 loss = caption_loss(decider, caption="the path is clear", oracle_context="obstacle at 0.3 m", n=64)
-print(loss)   # > 0: the caption dropped the obstacle context (the LiDAR-dog failure, as a number)
+print(loss)   # > 0: the caption dropped the obstacle (the LiDAR-dog failure, as a number)
 
-# The noise floor it is reported against:
-sigma = decision_stability(decider, "obstacle at 0.3 m", n=64)
+sigma = decision_stability(decider, "obstacle at 0.3 m", n=64)   # the noise floor it's reported against
 ```
 
-For real-robot recordings with no ground truth, use the behavioral-equivalence judge (`structural_equivalence` for typed action plans; `semantic_equivalence` for an LLM-as-judge routed through the proxy so the eval is itself recorded and replayable).
+For real-robot recordings with no ground truth, use the behavioral-equivalence judge: `structural_equivalence` for typed action plans, or `semantic_equivalence` for an LLM-as-judge routed through the proxy (so the eval is itself recorded and replayable).
 
-> **Open decisions requiring human review** before fidelity numbers are published: `render(G)` extraction (§14.5) and the `salient`/`weights` operation for fusion loss (§14.6). Both are surfaced in `fidelity/metrics.py` and guarded by `salient_artifact()`. See the `HUMAN REVIEW` banners in that module.
+> The `render(G)` extraction and the `salient`/`weights` operation for fusion loss are open judgment calls flagged for human review before fidelity numbers are published — see the `HUMAN REVIEW` banners in `fidelity/metrics.py` and [math-review-section7.md](math-review-section7.md).
 
-## 5. Gate (WS4)
+## 5. Gate in CI
 
-The regression gate — counterfactual-replay a set of golden episodes under a candidate config, score behavior drift, fail CI past a threshold — is implemented and tested (engineering spec §8). Run it from the CLI:
+The regression gate counterfactually replays a set of golden episodes under a candidate config, scores behavioral drift, and fails past a threshold:
 
 ```bash
-plumbline gate path/to/gate_config.py     # exits non-zero on drift; wrap in CI
+plumbline gate my_gate.py     # exits non-zero on drift; wrap in CI
 ```
 
-The gate config is a Python file exposing `build() -> GateSpec`; a ready example is `plumbline/bench/example_gate.py`, and the shipped GitHub Action (`.github/workflows/robot-behavior-gate.yml`) wraps this command. See [docs/results-experiment-c.md](results-experiment-c.md) for the fidelity results and `plumbline diff` / `plumbline scenes` for the trace-diff and Experiment-C authoring tools.
+The gate config is a Python file exposing `build() -> GateSpec` (the golden episodes + the change under test, as seam overrides). A ready example is [`plumbline/bench/example_gate.py`](../plumbline/bench/example_gate.py), and the shipped GitHub Action (`.github/workflows/robot-behavior-gate.yml`) wraps this command. `plumbline diff` and `plumbline scenes` give the trace-diff and Experiment-C authoring tools.
+
+---
+
+**Next:** the gate and record modes as native pytest ([pytest-plugin.md](pytest-plugin.md)) · the full API reference ([api.md](api.md)) · teaching Plumbline a new runtime ([writing-an-adapter.md](writing-an-adapter.md)) · what is and isn't guaranteed ([limitations.md](limitations.md)).
