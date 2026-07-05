@@ -109,7 +109,17 @@ class DecisionGate:
 
     decider: DeciderFn
     n: int = 32
-    k: float = 3.0  # threshold in σ units (§14.6 HUMAN REVIEW)
+    # Two thresholding modes (§14.6 HUMAN REVIEW; docs/math-review-section7.md):
+    #  - alpha (RECOMMENDED, distribution-free): fail iff the permutation p-value of
+    #    the observed divergence against the golden's own split-half null is < alpha.
+    #    Calibrated and assumption-free — the right tool for a metric that clusters
+    #    near 0/1, where a sigma-multiple's normality assumption fails (arXiv 2412.12148).
+    #  - k (legacy): fail iff excess/max(sigma, 1/n) > k. A sigma-multiple placeholder;
+    #    k=3 is uncalibrated. The sigma floor at 1/n (the estimator resolution) removes
+    #    the old sigma=0 -> infinity hair-trigger.
+    # alpha takes precedence when set; k is used only when alpha is None.
+    alpha: float | None = None
+    k: float = 3.0
     label: DecisionLabel = canonical_label
     divergence: Divergence = total_variation
     context_seam: Seam | None = None  # default: the single live_frontier seam
@@ -251,18 +261,27 @@ def _decision_gate(
     policy: FailurePolicy,
     quantile: float,
 ) -> GateResult:
-    """Score drift as decision divergence in σ-units, bypassing the surface matcher/
-    halt: run the decider on the recorded (golden) vs override (counterfactual) caption
-    at the frontier seam, and fail iff excess/σ > k."""
+    """Score drift as decision divergence, bypassing the surface matcher/halt: run the
+    decider on the recorded (golden) vs override (counterfactual) caption at the
+    frontier seam. In p-value mode (`alpha` set) fail iff the permutation p-value <
+    alpha; in legacy σ-unit mode fail iff excess/max(σ, 1/n) > k.
+
+    Both statistics are normalized to a HIGHER-IS-WORSE `stat` so the ANY/AGGREGATE/
+    QUANTILE policy machinery is shared: p-value → `1 − p` (threshold `1 − alpha`),
+    σ-mode → `excess/max(σ, 1/n)` (threshold `k`, σ floored at the estimator
+    resolution 1/n to kill the σ=0 → ∞ hair-trigger)."""
     seam = decision.context_seam or _single_frontier(config)
     override = config.overrides.get(seam)
     if override is None:
         raise ValueError(f"the decision gate needs an override for the frontier seam {seam.value}")
+    use_pvalue = decision.alpha is not None
+    threshold = (1.0 - decision.alpha) if decision.alpha is not None else decision.k
+    sigma_floor = 1.0 / decision.n
     drifts: list[EpisodeDrift] = []
     for episode in golden.episodes():
         worst: DecisionDrift | None = None
-        worst_n_sigma = 0.0
-        n_sigmas: list[float] = []
+        worst_stat = 0.0
+        stats: list[float] = []
         for event in store.load_episode(episode.episode_id).events:
             if event.seam is not seam:
                 continue
@@ -276,32 +295,30 @@ def _decision_gate(
                 label=decision.label,
                 divergence=decision.divergence,
             )
-            n_sigma = (
-                0.0
-                if score.excess == 0.0
-                else (math.inf if score.sigma == 0.0 else score.excess / score.sigma)
-            )
-            n_sigmas.append(n_sigma)
-            if worst is None or n_sigma > worst_n_sigma:
-                worst, worst_n_sigma = score, n_sigma
-        episode_n_sigma = max(n_sigmas, default=0.0)
-        diverged = episode_n_sigma > decision.k
+            if use_pvalue:
+                stat = 1.0 - score.p_value  # significance; higher = worse
+            else:
+                stat = score.excess / max(score.sigma, sigma_floor)  # n_sigma, floored
+            stats.append(stat)
+            if worst is None or stat > worst_stat:
+                worst, worst_stat = score, stat
+        episode_stat = max(stats, default=0.0)
         drifts.append(
             EpisodeDrift(
                 episode_id=episode.episode_id,
-                drift=episode_n_sigma,
-                diverged=diverged,
-                divergence_seam=seam if diverged else None,
+                drift=episode_stat,
+                diverged=episode_stat > threshold,
+                divergence_seam=seam if episode_stat > threshold else None,
                 divergence_distance=worst.divergence if worst else None,
                 decision_divergence=worst.divergence if worst else None,
                 sigma=worst.sigma if worst else None,
             )
         )
-    passed = bool(drifts) and _passes([d.drift for d in drifts], decision.k, policy, quantile)
+    passed = bool(drifts) and _passes([d.drift for d in drifts], threshold, policy, quantile)
     return GateResult(
         passed=passed,
-        threshold=decision.k,
+        threshold=threshold,
         policy=policy,
         per_episode=tuple(drifts),
-        threshold_units="sigma",
+        threshold_units="1 - p_value" if use_pvalue else "sigma",
     )

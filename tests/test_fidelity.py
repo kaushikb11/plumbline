@@ -137,3 +137,29 @@ def test_sampling_and_weights_are_validated() -> None:
         fusion_loss(_probe, "F", ["c1", "c2"], 4, weights=[1.0, math.nan])
     with pytest.raises(ValueError, match="finite and non-negative"):
         fusion_loss(_probe, "F", ["c1"], 4, weights=[-0.5])
+
+
+def test_permutation_pvalue_and_null_samples() -> None:
+    # The null = split-half divergences of one same-distribution sample; a real
+    # separation lands in its tail (low p), noise does not (high p). Distribution-
+    # free — the assumption-free alternative to a k-sigma threshold (arXiv 2412.12148).
+    from plumbline.fidelity import null_divergence_samples, permutation_pvalue
+
+    same = ["avoid"] * 32  # a point-mass sample -> null divergences all 0
+    null = null_divergence_samples(same)
+    assert null and max(null) == 0.0
+    # A full separation (observed div = 1.0) clears the whole null -> smallest p.
+    assert permutation_pvalue(null, 1.0) == pytest.approx(1 / 33)
+    # An observed value inside the null (0.0) -> not significant.
+    assert permutation_pvalue(null, 0.0) == 1.0
+    # Degenerate (no null) -> cannot reject.
+    assert permutation_pvalue([], 0.5) == 1.0
+
+
+def test_decision_drift_carries_a_permutation_pvalue() -> None:
+    from plumbline.fidelity import decision_drift
+
+    flip = decision_drift(_probe, "obstacle ahead", "clear ahead", 16)
+    assert flip.p_value < 0.05  # a real flip is significant
+    preserved = decision_drift(_probe, "obstacle ahead", "an obstacle just ahead", 16)
+    assert preserved.p_value == 1.0  # no divergence -> not significant

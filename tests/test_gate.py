@@ -305,3 +305,36 @@ def test_decision_gate_does_not_flag_a_benign_rephrasing() -> None:
     result = gate(store, golden, config, 0.1, decision=DecisionGate(_probe, k=3.0))
     assert result.passed is True
     assert result.per_episode[0].decision_divergence == 0.0
+
+
+def test_decision_gate_pvalue_mode_and_sigma_floor() -> None:
+    from plumbline.regression import gate as gate_mod
+
+    store = TraceStore()
+    config = _obstacle_episode(store, "a solid clear forty centimeters to the left of the robot")
+    golden = GoldenSet(store)
+    golden.add("obs")
+
+    # p-value mode (RECOMMENDED, distribution-free): the flip is significant -> fail.
+    caught = gate(store, golden, config, 0.0, decision=DecisionGate(_probe, alpha=0.05))
+    assert caught.passed is False
+    assert caught.threshold_units == "1 - p_value"
+    assert caught.per_episode[0].drift > 1.0 - 0.05  # 1 - p, above the (1 - alpha) line
+
+    # sigma floor (legacy k mode): a deterministic flip has sigma=0, but the drift is
+    # now FINITE (excess/max(sigma, 1/n)) not infinite, and still fails.
+    import math
+
+    k_caught = gate(store, golden, config, 0.0, decision=DecisionGate(_probe, n=16, k=3.0))
+    assert k_caught.passed is False
+    assert math.isfinite(k_caught.per_episode[0].drift)
+    assert k_caught.per_episode[0].drift == 16.0  # 1.0 / (1/16), the floored n_sigma
+
+    # A benign rephrase is not flagged in either mode.
+    store2 = TraceStore()
+    config2 = _obstacle_episode(store2, "an obstacle sitting forty centimeters to the robot left")
+    golden2 = GoldenSet(store2)
+    golden2.add("obs")
+    benign = gate(store2, golden2, config2, 0.0, decision=DecisionGate(_probe, alpha=0.05))
+    assert benign.passed is True
+    assert gate_mod is not None  # import used

@@ -69,6 +69,52 @@ unchanged. Q2's remaining question is whether that binning boundary is the right
 
 ---
 
+## Research-grounded upgrades (implemented — the sign-off is now partly pre-answered)
+
+A focused literature pass (LLM-eval thresholding, split-half reliability, permutation
+testing, LLM-API drift) resolved five of the register questions in code. The reviewer
+now confirms these rather than deciding them from scratch.
+
+- **Q15/Q16 — the k·σ threshold is the wrong tool; added a permutation p-value mode.**
+  The one paper on this exact question ([*How to Choose a Threshold for an LLM
+  Evaluation Metric*](https://arxiv.org/html/2412.12148v1)) **explicitly rejects fixed
+  z-score/σ multiples** because they assume normality — which fails for a metric that
+  clusters near 0/1 (exactly Plumbline's TV divergence on real data). Permutation tests
+  are the standard assumption-free two-distribution test ([data8](https://data8.org/fa15/text/3_inference.html)).
+  `decision.py` now exposes `null_divergence_samples` (the split-half null the σ
+  estimator already draws) and `permutation_pvalue`; `DecisionGate(alpha=…)` gates on
+  `p < alpha` — calibrated, normality-free — with `k` kept as a documented legacy
+  placeholder. The "σ-units" label was also imprecise (σ is the null *mean*, not the
+  null *SD*, so `excess/σ` is a relative excess, not a z-score); the p-value sidesteps
+  this. **Q15/Q16 → recommend: adopt `alpha` as the default; keep `k` labeled legacy.**
+- **Q12 — σ floored at 1/N.** The σ=0 → n_sigma=∞ hair-trigger is the zero-frequency
+  problem; the standard fix is additive smoothing / a minimum-detectable-effect floor
+  ([additive smoothing](https://en.wikipedia.org/wiki/Additive_smoothing), [MDE](https://www.mdrc.org/work/publications/why-estimates-below-minimum-detectable-effect-can-be-statistically-significant)):
+  you can't resolve noise below the estimator resolution ~1/N. The gate's σ-mode now
+  divides by `max(σ, 1/n)` — a genuine flip still fails, a single stray sample no
+  longer does. **Q12 → resolved (floored).**
+- **Q11 — the endpoint-stationarity assumption is now enforced.** Silent LLM-API drift
+  is a documented, named problem ([*Who Drifted?*](https://arxiv.org/abs/2606.15474),
+  [*Test Before You Deploy*](https://arxiv.org/html/2604.27789v1)); the recommended
+  mitigation is exactly what Plumbline records — the served model. `recorded_decision_
+  drift` now raises if the sibling samples report a different served model than the
+  on-path decision, turning the buried assumption into a checked precondition.
+  **Q11 → resolved (guarded).**
+- **Q9/Q1 — the 2N-draw σ is validated by the psychometric literature.** The noise
+  floor is a "noise ceiling from split-half reliability"; split-half *underestimates*
+  reliability (the √2 concern), corrected by [Spearman–Brown](https://en.wikipedia.org/wiki/Spearman%E2%80%93Brown_prediction_formula)
+  — and the 2N-draw is the "just measure at full size" alternative to that correction.
+  A principled choice, not ad-hoc. **Q9 → recommend YES.** (Q1's F1-redux stands; the
+  candidate-side size remains the only residual.)
+- **Q19 — resolved.** `recorded_decision_drift` now errors on a <2-label pool instead
+  of silently using σ=0.
+
+Full memo and sources: this section + the Findings above; the code changes are pinned
+by `tests/test_fidelity.py` (permutation), `tests/test_gate.py` (alpha mode + σ floor),
+and `tests/test_bridge.py` (model-drift guard, no-samples error).
+
+---
+
 ## 1. Formula-to-code map
 
 | Spec definition | Formula (spec text) | Implementation | Pinning test(s) | Deviation from literal spec & why |

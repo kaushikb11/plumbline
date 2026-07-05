@@ -4,6 +4,7 @@ limitations item "fidelity not wired to recorded seams")."""
 import random
 from collections.abc import Callable
 
+import pytest
 from plumbline.core.clock import VirtualClock
 from plumbline.core.recorder import Recorder
 from plumbline.core.seam import Seam
@@ -167,3 +168,74 @@ def test_drift_is_seed_stable_and_size_matched() -> None:
     s0 = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=same, seed=0).excess
     s1 = recorded_decision_drift(store, EPISODE, tick=0, candidate_responses=same, seed=1).excess
     assert s0 < 0.1 and s1 < 0.1
+
+
+def _tool_response_m(action: str, model: str) -> Payload:
+    r = _tool_response(action)
+    assert isinstance(r.inline, dict)
+    return Payload(inline={**r.inline, "model": model})
+
+
+def test_recorded_drift_errors_when_no_samples_exist() -> None:
+    # Q19: a pool too small to estimate a floor must NOT silently use sigma=0 (which
+    # makes any divergence look fully real). An empty sampling pass -> clear error.
+    store = TraceStore()
+    _record_episode(store, ticks=1)
+    sample_recorded_decisions(store, EPISODE, _scripted_post([]), n=0)  # empty sibling
+    with pytest.raises(ValueError, match="run sample_recorded_decisions"):
+        recorded_decision_drift(
+            store, EPISODE, tick=0, candidate_responses=[_tool_response("move back")]
+        )
+
+
+def test_recorded_drift_detects_endpoint_model_drift() -> None:
+    # Q11 / J8: the sibling samples are drawn later than the on-path call; a silent
+    # model swap between record and sampling makes them a different distribution.
+    # The response-reported model is the guard (arXiv 2606.15474).
+    store = TraceStore()
+    recorder = Recorder(store, VirtualClock())
+    recorder.open_episode(EPISODE, {})
+    req = Payload(inline={"messages": [{"role": "user", "content": "tick"}]})
+    recorder.record(
+        SeamEvent(
+            EPISODE,
+            0,
+            Seam.FUSE_TO_DECIDE,
+            0,
+            0.0,
+            req,
+            _tool_response_m("move forwards", "cortex-v1"),
+            "cortex",
+            {},
+            canonicalize(req).digest,
+            0.0,
+        )
+    )
+    recorder.close_episode(EPISODE)
+    # The sampling pass hit a DIFFERENT served model.
+    sample_recorded_decisions(
+        store, EPISODE, _scripted_post_m(["move forwards"] * 8, "cortex-v2"), n=8
+    )
+    with pytest.raises(ValueError, match="served-model mismatch"):
+        recorded_decision_drift(
+            store, EPISODE, tick=0, candidate_responses=[_tool_response("move back")]
+        )
+
+
+def test_recorded_drift_carries_a_permutation_pvalue() -> None:
+    store = TraceStore()
+    _record_episode(store, ticks=1)
+    sample_recorded_decisions(store, EPISODE, _scripted_post(["move forwards"] * 31), n=31)
+    flip = recorded_decision_drift(
+        store, EPISODE, tick=0, candidate_responses=[_tool_response("move back")] * 16
+    )
+    assert flip.p_value < 0.05  # a real flip is significant against the recorded null
+
+
+def _scripted_post_m(actions: "list[str]", model: str) -> Callable[[Payload], Payload]:
+    it = iter(actions)
+
+    def post(request: Payload) -> Payload:
+        return _tool_response_m(next(it), model)
+
+    return post

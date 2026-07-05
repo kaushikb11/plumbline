@@ -30,7 +30,8 @@ from plumbline.fidelity.decision import (
     Distribution,
     Divergence,
     histogram,
-    self_divergence,
+    null_divergence_samples,
+    permutation_pvalue,
     total_variation,
 )
 from plumbline.fidelity.metrics import DecisionDrift
@@ -193,18 +194,69 @@ def recorded_decision_drift(
     record n = 2·N samples for size-N semantics. The candidate side's sample size
     is the caller's, uncorrected (documented asymmetry; docs/math-review-section7.md).
     """
+    _check_endpoint_stationarity(store, episode_id, tick, seam)  # Q11 (model drift)
     pool = recorded_labels(store, episode_id, tick, seam=seam, label_of=label_of)
-    sigma = self_divergence(pool, divergence=divergence, trials=trials, seed=seed)
-    candidate = histogram([label_of(response) for response in candidate_responses])
     half = len(pool) // 2
-    if half == 0:  # degenerate pool (M < 2): no half to draw; σ is 0 here anyway
-        div = divergence(histogram(pool), candidate)
-    else:
-        rng = random.Random(seed ^ 0x5EED)  # independent of self_divergence's partitions
-        acc = 0.0
-        for _ in range(trials):
-            shuffled = list(pool)
-            rng.shuffle(shuffled)
-            acc += divergence(histogram(shuffled[:half]), candidate)
-        div = acc / trials  # E[div(golden M//2-half, candidate)] — matches σ's sizing
-    return DecisionDrift(divergence=div, sigma=sigma, excess=max(0.0, div - sigma))
+    if half == 0:
+        # Q19: fewer than 2 recorded labels can't estimate a noise floor — refusing
+        # to return a silent σ=0 (which would make any divergence look fully real).
+        raise ValueError(
+            f"recorded_decision_drift: tick {tick} has {len(pool)} recorded label(s); "
+            "run sample_recorded_decisions(..., n>=1) first (record n=2N for size-N σ)"
+        )
+    null = null_divergence_samples(pool, divergence=divergence, trials=trials, seed=seed)
+    sigma = sum(null) / len(null) if null else 0.0
+    candidate = histogram([label_of(response) for response in candidate_responses])
+    rng = random.Random(seed ^ 0x5EED)  # independent of self_divergence's partitions
+    acc = 0.0
+    for _ in range(trials):
+        shuffled = list(pool)
+        rng.shuffle(shuffled)
+        acc += divergence(histogram(shuffled[:half]), candidate)
+    div = acc / trials  # E[div(golden M//2-half, candidate)] — matches σ's sizing
+    return DecisionDrift(
+        divergence=div,
+        sigma=sigma,
+        excess=max(0.0, div - sigma),
+        p_value=permutation_pvalue(null, div),
+    )
+
+
+def _check_endpoint_stationarity(store: TraceStore, episode_id: str, tick: int, seam: Seam) -> None:
+    """Q11 / math-review J8: the sibling samples are drawn LATER in wall-clock time
+    than the on-path decision. A silent model swap between record and sampling makes
+    them a *different* D(x) — the buried endpoint-stationarity assumption. Plumbline
+    records the model each RESPONSE reports serving it, so enforce it: the sibling
+    samples must report the same model as the on-path decision. (Silent LLM-API
+    drift is real — arXiv 2606.15474 / 2604.27789; the response-reported model is
+    exactly the mitigation those recommend. Skipped when responses carry no `model`
+    field.)"""
+
+    def served_models(source_episode: str) -> set[str]:
+        return {
+            model
+            for e in store.load_episode(source_episode).events
+            if e.seam is seam and e.logical_tick == tick
+            for model in (_response_model(e.response),)
+            if model is not None
+        }
+
+    on_path = served_models(episode_id)
+    sampled = served_models(samples_episode_id(episode_id))
+    if on_path and sampled and on_path != sampled:
+        raise ValueError(
+            f"recorded_decision_drift: served-model mismatch at tick {tick} — on-path "
+            f"{sorted(on_path)} vs sibling samples {sorted(sampled)}. The endpoint "
+            "changed between record and sampling; the noise floor is not comparable."
+        )
+
+
+def _response_model(payload: Payload) -> str | None:
+    """The model an OpenAI-shaped response reports serving it (`inline["model"]`),
+    else None — provider-agnostic drift signal."""
+    inline = payload.inline
+    if isinstance(inline, dict):
+        model = inline.get("model")
+        if isinstance(model, str):
+            return model
+    return None

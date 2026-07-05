@@ -122,6 +122,35 @@ def decision_distribution(
 # --- noise floor (§7.2) -----------------------------------------------------
 
 
+def null_divergence_samples(
+    labels: Sequence[str],
+    *,
+    divergence: Divergence = total_variation,
+    trials: int = 32,
+    seed: int = 0,
+) -> list[float]:
+    """The NULL distribution of the divergence statistic: `div(half1, half2)` over
+    `trials` seeded random split-halves of one same-distribution sample (§7.2).
+
+    This IS the permutation/resampling null — the divergences you'd see between two
+    halves when there is no real difference. `self_divergence` is its mean (the
+    noise floor σ); `permutation_pvalue` compares an observed divergence against the
+    whole set. Returning the samples (not just the mean) lets a gate threshold by a
+    calibrated, distribution-free p-value rather than a normality-assuming k·σ —
+    the metric clusters near 0/1, where a σ-multiple is exactly the wrong tool
+    (arXiv 2412.12148; see docs/math-review-section7.md)."""
+    half = len(labels) // 2
+    if half == 0:
+        return []
+    rng = random.Random(seed)
+    samples: list[float] = []
+    for _ in range(trials):
+        shuffled = list(labels)
+        rng.shuffle(shuffled)
+        samples.append(divergence(histogram(shuffled[:half]), histogram(shuffled[half:])))
+    return samples
+
+
 def self_divergence(
     labels: Sequence[str],
     *,
@@ -129,22 +158,28 @@ def self_divergence(
     trials: int = 32,
     seed: int = 0,
 ) -> float:
-    """Split-half self-divergence of a fixed label sample — the §7.2 estimator core.
+    """Split-half self-divergence of a fixed label sample — the §7.2 estimator core
+    (the mean of `null_divergence_samples`, i.e. E[div(half1, half2)]).
 
-    Averages `div(half1, half2)` over `trials` seeded random partitions to estimate
-    the expectation. Reused for the decision-stability floor (§7.2) and the
-    behavioral judge's own noise floor (§7.5).
+    Reused for the decision-stability floor (§7.2) and the behavioral judge's own
+    noise floor (§7.5).
     """
-    half = len(labels) // 2
-    if half == 0:
-        return 0.0
-    rng = random.Random(seed)
-    acc = 0.0
-    for _ in range(trials):
-        shuffled = list(labels)
-        rng.shuffle(shuffled)
-        acc += divergence(histogram(shuffled[:half]), histogram(shuffled[half:]))
-    return acc / trials
+    samples = null_divergence_samples(labels, divergence=divergence, trials=trials, seed=seed)
+    return sum(samples) / len(samples) if samples else 0.0
+
+
+def permutation_pvalue(null_samples: Sequence[float], observed: float) -> float:
+    """Distribution-free p-value: the fraction of the NULL divergences (two halves of
+    the same distribution) that are >= the OBSERVED divergence, with the standard
+    +1 correction so it is never exactly 0 (`(1 + #{null >= obs}) / (1 + trials)`).
+
+    A calibrated, normality-free alternative to thresholding `excess/sigma > k`:
+    gate on `p < alpha`. With no null samples (degenerate <2-sample pool), returns
+    1.0 (cannot reject the null)."""
+    if not null_samples:
+        return 1.0
+    ge = sum(1 for s in null_samples if s >= observed)
+    return (1 + ge) / (1 + len(null_samples))
 
 
 def decision_stability(

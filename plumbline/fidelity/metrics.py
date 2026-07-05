@@ -40,6 +40,9 @@ from plumbline.fidelity.decision import (
     canonical_label,
     decision_distribution,
     decision_stability,
+    null_divergence_samples,
+    permutation_pvalue,
+    sample_labels,
     total_variation,
 )
 
@@ -82,11 +85,14 @@ def caption_loss(
 @dataclass(frozen=True)
 class DecisionDrift:
     """Decision-space drift between two contexts. `excess` is caption_loss's value;
-    `divergence` and `sigma` are surfaced so a gate can threshold in sigma units."""
+    `divergence` and `sigma` are surfaced so a gate can threshold in sigma units.
+    `p_value` is the distribution-free alternative — the permutation p-value of the
+    observed divergence against the golden's own split-half null (§7.2)."""
 
     divergence: float  # div(D(candidate), D(golden)), 0..1
-    sigma: float  # the decider's noise floor at the golden context
+    sigma: float  # the decider's noise floor at the golden context (mean of the null)
     excess: float  # max(0.0, divergence - sigma)
+    p_value: float  # P(null divergence >= observed); gate on p < alpha (assumption-free)
 
 
 def decision_drift(
@@ -101,13 +107,24 @@ def decision_drift(
     """Drift between acting on the golden vs candidate context, beyond the decider's
     own noise floor (§7.3). `excess` is identical to `caption_loss(decider,
     candidate_context, golden_context, n, ...)`; this additionally returns the raw
-    divergence and sigma. The decider must be live / temperature-sampling, not a
-    by-digest faithful replay (the REPLAY CAVEAT in fidelity.decision)."""
+    divergence, sigma, and a permutation `p_value`. The decider must be live /
+    temperature-sampling, not a by-digest faithful replay (the REPLAY CAVEAT in
+    fidelity.decision)."""
     d_candidate = decision_distribution(decider, candidate_context, n, label=label)
     d_golden = decision_distribution(decider, golden_context, n, label=label)
-    sigma = decision_stability(decider, golden_context, n, label=label, divergence=divergence)
     div = divergence(d_candidate, d_golden)
-    return DecisionDrift(divergence=div, sigma=sigma, excess=max(0.0, div - sigma))
+    # One golden 2N pool feeds BOTH the noise floor (its mean) and the permutation
+    # null (its split-halves), so sigma is unchanged from the decision_stability
+    # value and the p-value reuses the same draw — no extra decider calls.
+    golden_pool = sample_labels(decider, golden_context, 2 * n, label=label)
+    null = null_divergence_samples(golden_pool, divergence=divergence)
+    sigma = sum(null) / len(null) if null else 0.0
+    return DecisionDrift(
+        divergence=div,
+        sigma=sigma,
+        excess=max(0.0, div - sigma),
+        p_value=permutation_pvalue(null, div),
+    )
 
 
 def fusion_loss(
