@@ -3,16 +3,29 @@
 FROZEN (CLAUDE.md invariant 1): `Matcher`, `MatchVerdict`, and the three built-in
 matcher signatures are the contract. The method *bodies* are WS1 implementation.
 
-The embedding matcher routes free text through a module-level pinned `Embedder`
-so it is deterministic and reproducible (§3.7). The default is a dependency-free
+The embedding matcher routes free text through a pinned `Embedder` so it is
+deterministic and reproducible (§3.7). The default is a dependency-free
 bag-of-tokens vectorizer; install a real pinned model with `set_embedder(...)`
 (see `plumbline.embedding`). The frozen `EmbeddingMatcher(threshold)` signature
-has no constructor injection point, so the module-level hook is the mechanism
+has no constructor injection point, so the pinned embedder lives at module scope
 (flagged at the matcher).
+
+The pin is held in a `contextvars.ContextVar`, NOT a plain module global, so that
+concurrent episodes / parallel test threads that each pin a different embedder get
+their OWN embedder instead of last-writer-wins cross-contamination. A plain module
+global is process-wide: two async tasks or threads pinning different embedders
+would silently both run under whichever wrote last. The ContextVar makes the pin
+per-execution-context. Use `using_embedder(...)` to scope a pin to one
+episode/replay, and `set_embedder(...)` for the single-threaded "pin once" case
+(which still works exactly as before). `active_embedder()` / `active_embedder_name()`
+surface which embedder actually ran (a core-only PASS silently used bag-of-tokens,
+not a semantic model — these accessors make that observable).
 """
 
+import contextlib
+import contextvars
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -74,8 +87,9 @@ class EmbeddingMatcher:
     threshold: float
 
     def matches(self, live: Payload, recorded: Payload) -> MatchVerdict:
-        live_vec = _embed(_extract_text(live))
-        recorded_vec = _embed(_extract_text(recorded))
+        embed = _current_embedder()
+        live_vec = embed(_extract_text(live))
+        recorded_vec = embed(_extract_text(recorded))
         distance = _cosine_distance(live_vec, recorded_vec)
         is_match = distance < self.threshold
         return MatchVerdict(
@@ -151,19 +165,85 @@ def _bag_of_tokens(text: str) -> Mapping[str, float]:
     return counts
 
 
-# The currently pinned embedder. EmbeddingMatcher.matches resolves this at call
-# time, so `set_embedder` (or monkeypatching `_embed`) swaps it globally.
+# The process-wide default embedder. This module attribute is the fallback used
+# when no per-context pin is active, and it is kept in sync by `set_embedder` so
+# that monkeypatching `plumbline.core.matcher._embed` (the interpreted injection
+# point, §3.7) still swaps the embedder the matcher resolves.
 _embed: Embedder = _bag_of_tokens
+
+# The per-execution-context pin. Unset by default (LookupError falls back to the
+# module-level `_embed`), so concurrent async tasks / threads that each pin their
+# own embedder are isolated instead of clobbering one shared global. See the module
+# docstring for why this is a ContextVar and not a plain global.
+_embedder_var: contextvars.ContextVar[Embedder] = contextvars.ContextVar("plumbline_embedder")
+
+
+def _current_embedder() -> Embedder:
+    """Resolve the embedder active in THIS execution context.
+
+    A per-context pin (from `set_embedder` / `using_embedder` in the current
+    context) wins; otherwise fall back to the module-level `_embed` default. This
+    is the single read path — `EmbeddingMatcher.matches` calls it at match time.
+    """
+    try:
+        return _embedder_var.get()
+    except LookupError:
+        return _embed
 
 
 def set_embedder(embedder: Embedder) -> None:
-    """Install `embedder` as the pinned embedder for EmbeddingMatcher (§3.7).
+    """Pin `embedder` as the embedder for EmbeddingMatcher (§3.7).
 
-    Pins it globally so a recorded episode and its replay use the same embedder —
-    record the model's identity alongside the episode for reproducibility.
+    Pins it for the CURRENT execution context so a recorded episode and its replay
+    use the same embedder — record the model's identity alongside the episode for
+    reproducibility. Because the pin is context-local, concurrent episodes / test
+    threads that each call `set_embedder` no longer cross-contaminate (previously
+    the last writer's embedder silently won for everyone).
+
+    The module-level `_embed` default is updated too, preserving the historical
+    single-threaded contract (pin once, then use) and the monkeypatch hook. For a
+    scoped pin that auto-restores, prefer `using_embedder`.
     """
     global _embed
     _embed = embedder
+    _embedder_var.set(embedder)
+
+
+@contextlib.contextmanager
+def using_embedder(embedder: Embedder) -> Iterator[None]:
+    """Pin `embedder` for the duration of a `with` block, then restore (§3.7).
+
+    The clean way to pin one episode/replay's embedder without leaking it to other
+    contexts: the pin is context-local and is undone via the ContextVar token on
+    exit, even on exception. Does NOT touch the module-level `_embed` default, so
+    unlike `set_embedder` it leaves no residue behind.
+    """
+    token = _embedder_var.set(embedder)
+    try:
+        yield
+    finally:
+        _embedder_var.reset(token)
+
+
+def active_embedder() -> Embedder:
+    """The embedder that would run right now in this context (pin or default).
+
+    Lets callers surface which embedder actually served a verdict — e.g. to record
+    it alongside an episode, or to flag that a core-only run silently used the
+    dependency-free bag-of-tokens stand-in rather than a pinned semantic model.
+    """
+    return _current_embedder()
+
+
+def active_embedder_name(embedder: Embedder | None = None) -> str:
+    """A human-readable identity for `embedder` (defaults to the active one).
+
+    Surfaces `bag_of_tokens` for the default so a PASS that never installed a
+    semantic embedder is legible rather than silently trusted.
+    """
+    target = active_embedder() if embedder is None else embedder
+    name = getattr(target, "__name__", "")
+    return name if name else type(target).__name__
 
 
 def _cosine_distance(a: Mapping[str, float], b: Mapping[str, float]) -> float:

@@ -14,7 +14,10 @@ from plumbline.core.matcher import (
     Matcher,
     MatchVerdict,
     NumericToleranceMatcher,
+    active_embedder,
+    active_embedder_name,
     set_embedder,
+    using_embedder,
 )
 from plumbline.core.recorder import Recorder
 from plumbline.core.replayer import DivergencePolicy, Replayer, ReplayResult
@@ -71,8 +74,11 @@ __all__ = [
     "Trace",
     "TraceStore",
     "VirtualClock",
+    "active_embedder",
+    "active_embedder_name",
     "canonical_dumps",
     "canonicalize",
     "make_seam_event",
     "set_embedder",
+    "using_embedder",
 ]

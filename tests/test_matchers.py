@@ -168,3 +168,110 @@ def test_action_schema_matcher_reorder_tolerance() -> None:
         }
     )
     assert not recommended_behavior_matcher(schema).matches(plan_ab, different).is_match
+
+
+# --- pinned-embedder mechanism: context isolation (§3.7) --------------------
+
+import contextvars  # noqa: E402
+import threading  # noqa: E402
+from collections.abc import Iterator  # noqa: E402
+from contextlib import contextmanager  # noqa: E402
+
+import plumbline.core.matcher as matcher_module  # noqa: E402
+from plumbline.core.matcher import (  # noqa: E402
+    Embedder,
+    active_embedder,
+    active_embedder_name,
+    set_embedder,
+    using_embedder,
+)
+
+
+@contextmanager
+def _restore_module_default() -> Iterator[None]:
+    """Save/restore the process-wide `_embed` default so a test that calls
+    `set_embedder` (which syncs the module default for back-compat) does not leak
+    its embedder into sibling tests."""
+    original = matcher_module._embed
+    try:
+        yield
+    finally:
+        matcher_module._embed = original
+
+
+def _const_embedder(_text: str) -> Mapping[str, float]:
+    """Everything maps to the same vector -> cosine distance 0 -> always matches."""
+    return {"const": 1.0}
+
+
+def _per_text_embedder(text: str) -> Mapping[str, float]:
+    """Bag-of-tokens -> disjoint captions are orthogonal -> distance 1 -> no match."""
+    return {token: 1.0 for token in text.lower().split()}
+
+
+def test_using_embedder_scopes_the_pin_and_restores() -> None:
+    # Outside the block: the module default (dependency-free bag-of-tokens).
+    assert active_embedder_name() == "_bag_of_tokens"
+    with using_embedder(_const_embedder):
+        assert active_embedder() is _const_embedder
+    # Restored on exit — no leak past the block.
+    assert active_embedder_name() == "_bag_of_tokens"
+
+
+def test_concurrent_threads_get_isolated_embedders() -> None:
+    """Two threads each `set_embedder` to a DIFFERENT embedder and must each see
+    their OWN — not last-writer-wins. This is the production MAJOR: with a plain
+    process-global, both threads would run under whichever wrote last.
+
+    A plain `threading.Thread` does NOT auto-copy the parent context (each thread
+    starts with a fresh context), so setting the pin *inside* each worker gives it
+    an isolated ContextVar. A barrier forces both writes to land before either
+    thread reads, so a global last-writer-wins would be observable here.
+    """
+    base = Payload(inline={"caption": "human left"})
+    divergent = Payload(inline={"caption": "path clear"})
+    barrier = threading.Barrier(2)
+    results: dict[str, bool] = {}
+
+    def worker(tag: str, embedder: Embedder, expect_match: bool) -> None:
+        set_embedder(embedder)  # set WITHIN the thread -> this thread's context only
+        barrier.wait()  # both threads have now pinned; force interleaving
+        matcher = EmbeddingMatcher(threshold=0.25)
+        own = active_embedder() is embedder
+        verdict = matcher.matches(base, divergent).is_match is expect_match
+        results[tag] = own and verdict
+
+    with _restore_module_default():  # set_embedder syncs the shared module default; undo it
+        threads = [
+            threading.Thread(target=worker, args=("const", _const_embedder, True)),
+            threading.Thread(target=worker, args=("per_text", _per_text_embedder, False)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    # Each thread saw its OWN embedder and thus its OWN verdict, despite the other
+    # thread concurrently pinning a different one.
+    assert results == {"const": True, "per_text": True}
+
+
+def test_set_embedder_single_threaded_pin_then_use_unchanged() -> None:
+    """The historical contract: `set_embedder` then use, in the same context,
+    still pins for subsequent matches (existing single-threaded behavior).
+
+    Run in a copied context so the per-context pin does not leak into the shared
+    main context (which would shadow sibling tests that monkeypatch the module
+    default); the module default is saved/restored separately.
+    """
+    base = Payload(inline={"caption": "human left"})
+    divergent = Payload(inline={"caption": "path clear"})
+
+    def body() -> None:
+        set_embedder(_const_embedder)
+        assert active_embedder() is _const_embedder
+        assert matcher_module._embed is _const_embedder  # module default kept in sync
+        assert EmbeddingMatcher(threshold=0.25).matches(base, divergent).is_match is True
+
+    with _restore_module_default():
+        contextvars.copy_context().run(body)
