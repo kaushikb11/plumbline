@@ -115,7 +115,7 @@ result = Replayer(store, VirtualClock(), matchers).counterfactual(
 
 ## 4. Measure fidelity
 
-Fidelity is scored on downstream **decision success**, corrected for the decider's own sampling noise — never on caption surface text:
+Fidelity is scored on downstream **decision agreement** — does the caption make the decider act as it would on ground truth — corrected for the decider's own sampling noise, never on caption surface text. (Agreement with the oracle-fed decider, not task correctness; see [limitations.md](limitations.md).)
 
 ```python
 from plumbline.fidelity import caption_loss, decision_stability

@@ -4,7 +4,7 @@ This is the most important honesty boundary in the project. It is stated precise
 
 ## What Plumbline guarantees
 
-On replay, every model call receives the **recorded request** and returns the **recorded response**. Because the loop's non-model transforms are deterministic, the **sequence of decisions and actions is reproduced**. This is *deterministic model-I/O replay*.
+On replay, every model call receives the **recorded request** and returns the **recorded response**. *Provided every source of nondeterminism crosses a captured seam and all other per-tick state is a pure function of captured model outputs* (the condition — see below), the loop's non-model transforms are deterministic and the **sequence of decisions and actions is reproduced**. This is *deterministic model-I/O replay*. When the condition is violated (RAG or a timestamp inside the fuser, async sensor-arrival order deciding which frame is fused), replay does not silently fabricate — an uncaptured input changes a request digest, which has no recorded response, so re-drive fails **loudly** (`ReplayMiss`), never quietly wrong.
 
 Concretely, this is what the substrate proves:
 

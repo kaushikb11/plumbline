@@ -71,7 +71,14 @@ One arc, four stages, each validating the next:
 ## Two hard rules that shape everything
 
 - **The determinism envelope is model-I/O only.** On replay every model call receives the recorded request and returns the recorded response, so the decision/action sequence is reproduced. Plumbline does **not** control the runtime's wall-clock scheduler unless an adapter exposes a clock hook. Loop *timing* may vary across replays; model *I/O* does not. See [determinism-envelope.md](determinism-envelope.md).
-- **Halt-on-divergence is the default, and divergence is a result, not an error.** In counterfactual replay, when a downstream seam's live input no longer matches the recording, Plumbline stops, records the seam and distance, and returns that — it never silently serves a stale recorded response past a divergence.
+- **Halt-on-divergence is the default, and divergence is a result, not an error.** In counterfactual replay, when a downstream seam's live input no longer matches the recording, Plumbline stops, records the seam and distance, and returns that — it never silently serves a stale recorded response past a divergence. The distance is **onset/location attribution** (which seam broke first, how far), not the full downstream action-sequence *magnitude* — halting stops before fabricating a decision the model never made, so the total behavioral consequence comes from the live re-drive, not the halt-point scalar.
+
+## A note on precision
+
+Two words in the framing are precise in the metrics but easy to over-read in prose:
+
+- **"Bottleneck"** fits `SENSOR_TO_CAPTION` exactly (pixels/lidar → text is genuine lossy compression). It fits `CAPTION_TO_FUSE` *loosely*: the Fuser also **injects** rules + RAG, so information can *increase* there — it is a bottleneck *and* an injector. `caption_loss` measures the compression-loss; `fusion_loss` measures caption content the fuse step *drops*; the governance-rule flip (Experiment B) is an *injection*/drift result, not a loss one.
+- **"Fidelity"** here means agreement with the decision the same decider makes on ground truth — not task correctness (see [limitations.md](limitations.md)).
 
 ## Where to go next
 

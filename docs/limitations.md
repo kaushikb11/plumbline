@@ -42,9 +42,24 @@ These work, but narrower than a headline read suggests.
   *information* loss (no phrasing guard yet, unlike the fusion `salient_artifact`), and
   degenerates for continuous action spaces under the default label (inject a tolerance
   label from the ActionSchema).
+- **The metric scores decision *agreement*, not task *success*.** `render(G)` is not
+  ground truth — it is ground truth run through the *same* decider, and `D(render(G))`
+  is treated as the reference. So `caption_loss` measures "does the caption make the
+  decider behave as it would on ground truth," which equals task fidelity only insofar
+  as the decider is itself competent on ground truth — an assumption the metric cannot
+  check. A caption that steers a systematically-wrong decider toward the *correct* action
+  scores as loss; one that faithfully reproduces the decider's mistake scores zero. The
+  spec's honest alternative — a task-success-rate-gap divergence (§7.1) — is not yet
+  implemented. Read "downstream decision fidelity" as *agreement with the oracle-fed
+  decider*, not correctness.
 - **The counterfactual is a single-seam linear-chain stand-in.** It compares the swapped
   seam's live-vs-recorded output with a matcher; it does NOT re-run the fuser or decider.
-  Multi-seam frontiers raise `NotImplementedError`.
+  Multi-seam frontiers raise `NotImplementedError`. And the divergence *distance* is
+  **onset/location attribution** — which seam broke first, and how far — **not** the
+  downstream action-sequence *magnitude* (would the robot then turn into a wall?): halt
+  correctly stops before fabricating a decision the model never made on the live input,
+  so the full behavioral consequence needs the live re-drive (or the `DecisionGate`'s one
+  de-truncated downstream step), not the halt-point scalar.
 
 ## Recently closed
 
