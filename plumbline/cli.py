@@ -36,7 +36,7 @@ import sys
 from collections.abc import Sequence
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from plumbline.recording import ReconstructingAdapter
@@ -211,21 +211,78 @@ def _serve(app: object, host: str, port: int) -> None:  # pragma: no cover - thi
 
 
 def _build_adapter(name: str) -> "ReconstructingAdapter":
+    """Resolve an adapter by name (built-in), by installed plugin (the
+    `plumbline.adapters` entry-point group), or by `module:Class` path — then verify
+    it satisfies the adapter contract (`assert_conforms`) so a wrong adapter fails
+    here with a clear message, not later as a replay divergence."""
+    from plumbline.adapters.base import Adapter
+    from plumbline.adapters.conformance import ConformanceError, assert_conforms
+
+    if ":" in name:
+        adapter = _adapter_from_path(name)
+    else:
+        adapter = _builtin_adapter(name) or _adapter_from_entry_points(name)
+    if adapter is None:
+        raise ValueError(
+            f"unknown adapter {name!r}; choose a built-in (om1, g1, generic), an "
+            "installed plugin (see the 'plumbline.adapters' entry-point group), or a "
+            "'module:Class' path"
+        )
+    try:
+        assert_conforms(adapter)
+    except ConformanceError as exc:
+        raise ValueError(f"adapter {name!r} does not satisfy the adapter contract: {exc}") from exc
+    assert isinstance(adapter, Adapter)  # narrows for the type checker (runtime_checkable)
+    return adapter
+
+
+def _builtin_adapter(name: str) -> object | None:
     from plumbline.adapters.g1 import G1Adapter
     from plumbline.adapters.generic import GenericAgentAdapter
     from plumbline.adapters.om1 import OM1Adapter
-    from plumbline.recording import ReconstructingAdapter
 
-    # Adapters with BOTH reconstruct_* hooks (all three, since the G1 adapter was
-    # rebuilt on OM1's real source and gained reconstruct_decide_to_act).
-    builders: dict[str, ReconstructingAdapter] = {
-        "om1": OM1Adapter(proxy_base_url=""),
-        "g1": G1Adapter(proxy_base_url=""),
-        "generic": GenericAgentAdapter(proxy_base_url=""),
-    }
-    if name not in builders:
-        raise ValueError(f"unknown adapter {name!r}; choose om1, g1, or generic")
-    return builders[name]
+    builders = {"om1": OM1Adapter, "g1": G1Adapter, "generic": GenericAgentAdapter}
+    factory = builders.get(name)
+    return factory(proxy_base_url="") if factory else None
+
+
+def _adapter_from_entry_points(name: str) -> object | None:
+    from importlib.metadata import entry_points
+
+    for entry in entry_points(group="plumbline.adapters"):
+        if entry.name == name:
+            return _instantiate_adapter(entry.load(), name)
+    return None
+
+
+def _adapter_from_path(spec: str) -> object:
+    import importlib
+
+    module_name, _, class_name = spec.partition(":")
+    try:
+        module = importlib.import_module(module_name)
+        obj = getattr(module, class_name)
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(f"could not load adapter {spec!r}: {exc}") from exc
+    return _instantiate_adapter(obj, spec)
+
+
+def _instantiate_adapter(obj: Any, label: str) -> object:
+    """Accept an already-built adapter, or construct one from a class/factory —
+    trying a no-arg call first, then `proxy_base_url=""` (the built-in convention).
+    `obj` is plugin-loaded (Any); the caller conformance-checks the result."""
+    if not callable(obj):
+        return obj
+    try:
+        return obj()
+    except TypeError:
+        try:
+            return obj(proxy_base_url="")
+        except TypeError as exc:
+            raise ValueError(
+                f"adapter {label!r} could not be constructed (needs no-arg or "
+                f"proxy_base_url= constructor): {exc}"
+            ) from exc
 
 
 def run_record(

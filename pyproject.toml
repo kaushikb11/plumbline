@@ -63,6 +63,17 @@ dev = [
 [project.scripts]
 plumbline = "plumbline.cli:main"
 
+# Auto-load the pytest plugin (record/replay fixtures + the gate-as-assertion).
+[project.entry-points.pytest11]
+plumbline = "plumbline.pytest_plugin"
+
+# Built-in adapters, discoverable by name via importlib.metadata; third-party
+# runtimes register their own adapters under this same group.
+[project.entry-points."plumbline.adapters"]
+om1 = "plumbline.adapters.om1:OM1Adapter"
+g1 = "plumbline.adapters.g1:G1Adapter"
+generic = "plumbline.adapters.generic:GenericAgentAdapter"
+
 [tool.hatch.build.targets.wheel]
 packages = ["plumbline"]
 
