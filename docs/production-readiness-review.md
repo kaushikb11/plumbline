@@ -5,7 +5,24 @@ the guarantees (not confirm them) and to ground findings in `file:line` + real r
 (wheel builds, repro scripts, PoCs). This is a production-readiness review — "would a
 real OM1 team survive depending on this in a live robot + CI" — not a DX review.
 
+> **UPDATE (2026-07): all four blockers + both security majors below are now FIXED**
+> (266 tests, `mypy --strict` + `ruff` clean). Blocker 1/2 — the HTTP replay path now
+> delegates to the tested `ReplayingProxy` (per-digest cursor, `ReplayMiss`, indexed
+> once) — no more false-green, no more O(n²). Blocker 3 — `_ensure_open` moved inside
+> the zero-touch guard; a store fault on the first call is logged-and-dropped and the
+> upstream response is still returned. Blocker 4 — torn *trailing* lines recover the
+> good events (interior corruption still raises), re-opening a non-empty episode raises
+> `EpisodeExists` instead of wiping, and appends fsync / manifests write atomically.
+> Security 5 — a `redactor` hook on the recording proxy (`redactor_for({...})`) scrubs
+> named JSON fields before write, plus a "traces are sensitive" warning in README/FAQ.
+> Security 6 — `TraceStore` validates path components (`UnsafeTraceRef`) so a hostile
+> shared trace can't traverse outside the store. **The deployed verdict moves to
+> Ready-with-caveats**; the remaining *majors* (streaming reads, semver policy,
+> `limitations.md` reconciliation, OTel status, SSE buffering, global embedder) are the
+> follow-up set. See the "Majors" section for what's left.
+
 ## Verdict: NOT YET production-ready for the deployed/live use case — but the gap is narrow, well-defined, and fixable
+## (original assessment below; blockers + security majors since resolved — see banner)
 
 The **substrate is genuinely production-grade**: the frozen `core/`, the `ReplayingProxy`,
 the determinism/divergence guarantees, the fidelity gate math, the OM1 integration

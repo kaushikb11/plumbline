@@ -137,6 +137,8 @@ result = replayer.counterfactual(
 
 Or serve faithful replay so the runtime re-drives against recorded responses (no upstream): `plumbline replay --store ./traces --episode go2-001`.
 
+> **⚠️ Traces are sensitive.** A recorded episode stores model requests and responses **verbatim** — system prompts, governance rules, tool outputs, and any PII they carry. Treat a trace store like source secrets: review before committing a golden episode, and never push one to a public repo unscrubbed. To scrub at record time, pass a `redactor` to the recording proxy — e.g. `RecordingProxy(..., redactor=redactor_for({"api_key", "authorization"}))` from `plumbline.proxy` — which blanks the named JSON fields before anything is written. (The proxy never records HTTP auth headers, only bodies.)
+
 ### 4. Measure fidelity
 
 ```python

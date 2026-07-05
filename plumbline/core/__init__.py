@@ -19,7 +19,13 @@ from plumbline.core.matcher import (
 from plumbline.core.recorder import Recorder
 from plumbline.core.replayer import DivergencePolicy, Replayer, ReplayResult
 from plumbline.core.seam import Seam
-from plumbline.core.store import EpisodeNotFound, EpisodeNotOpen, TraceStore
+from plumbline.core.store import (
+    EpisodeExists,
+    EpisodeNotFound,
+    EpisodeNotOpen,
+    TraceStore,
+    UnsafeTraceRef,
+)
 from plumbline.core.trace import (
     BlobKind,
     BlobRef,
@@ -45,9 +51,11 @@ __all__ = [
     "DivergencePolicy",
     "EmbeddingMatcher",
     "Episode",
+    "EpisodeExists",
     "EpisodeManifest",
     "EpisodeNotFound",
     "EpisodeNotOpen",
+    "UnsafeTraceRef",
     "ExactMatcher",
     "Interceptor",
     "JSONValue",
