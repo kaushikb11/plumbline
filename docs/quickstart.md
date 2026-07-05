@@ -2,6 +2,19 @@
 
 This walks the operator flow — **point base URLs at the proxy → record → replay → measure fidelity** — using the shipped Python API. Every snippet here runs against the current build (Python ≥ 3.12). The `plumbline record / replay / gate / diff / scenes` CLI (spec §11) and the CI gate (WS4) are implemented and tested; the Python API below is what those subcommands wrap.
 
+If you are new to the concepts (the four seams, the record → replay → gate lifecycle), read [concepts.md](concepts.md) first — it is the one-page mental model.
+
+## 0. Run something green in one command
+
+Before wiring anything, prove the install works. This needs no extras and no network:
+
+```bash
+pip install -e .                          # core only (stdlib); see the Install section of the README for extras
+plumbline gate bench/om1_gazebo_gate.py   # replays a real Go2/Gazebo golden trace and exits 0
+```
+
+That gates the committed Gazebo golden episode (`om1-gazebo-maze-003`, 4,095 events): it must replay byte-identically and pass — the same check CI runs on every PR. `plumbline list` shows the episodes on disk. `record` and `replay` (below) run a proxy *server* and additionally need the `proxy` extra (`pip install -e '.[proxy]'`).
+
 ## 1. Point your runtime at the proxy (zero source changes)
 
 `configure_proxy()` returns the config fields (and/or env vars) that redirect the runtime's model base URL to the Plumbline proxy. No runtime source edits.
@@ -96,12 +109,14 @@ def swapped_captioner(recorded_request: Payload) -> Payload:
     return Payload(inline={"caption": "the path is clear"})   # drops the obstacle context
 
 result = Replayer(store, VirtualClock(), matchers).counterfactual(
-    "go2-gazebo-001",
+    "demo",   # the episode recorded in step 2 above
     live_frontier={Seam.SENSOR_TO_CAPTION},
     overrides={Seam.SENSOR_TO_CAPTION: swapped_captioner},
-    on_divergence=DivergencePolicy.HALT,   # the default
+    on_divergence=DivergencePolicy.HALT,   # HALT is the recommended policy (invariant 5); it is
+                                           # required — there is no default — and divergence is a result, not an error
 )
-# result.diverged, result.divergence_seam (CAPTION_TO_FUSE), result.divergence_distance
+# result.diverged (True), result.divergence_seam (FUSE_TO_DECIDE for this two-seam demo
+# episode — it has no derived CAPTION_TO_FUSE), result.divergence_distance
 ```
 
 **Worked, runnable examples:** `tests/test_om1_counterfactual.py` records a full Go2 Gazebo episode end to end; `tests/test_proxy_counterfactual.py` does the same through `RecordingProxy` and asserts both the no-divergence (compatible) and halt (incompatible) cases.

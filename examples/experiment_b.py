@@ -40,6 +40,11 @@ from plumbline.core.seam import Seam
 from plumbline.core.trace import JSONValue, Payload, SeamEvent, canonicalize
 from plumbline.observability.baselines import compare_against_baselines
 
+try:
+    from examples._env import friendly_endpoint
+except ImportError:  # `python examples/experiment_b.py`: examples/ is on sys.path, not repo root
+    from _env import friendly_endpoint
+
 BASE_URL = os.environ.get("PLUMBLINE_OLLAMA_URL", "http://localhost:11434/v1")
 VLM = os.environ.get("PLUMBLINE_VLM", "moondream")
 DECIDER = os.environ.get("PLUMBLINE_DECIDER", "llama3.2:1b")
@@ -187,4 +192,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with friendly_endpoint("Ollama", BASE_URL, hint="Is Ollama running? (ollama serve)"):
+        main()

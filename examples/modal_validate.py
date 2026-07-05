@@ -29,6 +29,11 @@ from plumbline.proxy.http import AsyncHTTPProxy, AsyncTransport, HTTPRequest, HT
 from plumbline.proxy.recording import ReplayingProxy
 from plumbline.proxy.tick import BoundaryTickPolicy
 
+try:
+    from examples._env import friendly_endpoint, require_env
+except ImportError:  # `python examples/modal_validate.py`: examples/ is on sys.path, not repo root
+    from _env import friendly_endpoint, require_env
+
 _JSON_HEADERS = {"content-type": "application/json"}
 # A 1x1 PNG data URL — a placeholder frame; supply real corridor images for real captions.
 _FRAME = (
@@ -148,8 +153,8 @@ def verify_faithful_replay(store: TraceStore, episode_id: str) -> bool:
 
 
 def main() -> None:
-    vlm_url = os.environ["PLUMBLINE_VLM_URL"].rstrip("/")
-    llm_url = os.environ["PLUMBLINE_LLM_URL"].rstrip("/")
+    vlm_url = require_env("PLUMBLINE_VLM_URL", "the Modal VLM serve URL").rstrip("/")
+    llm_url = require_env("PLUMBLINE_LLM_URL", "the Modal LLM serve URL").rstrip("/")
 
     import httpx
     from plumbline.proxy.server import HttpxTransport
@@ -167,4 +172,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    vlm = os.environ.get("PLUMBLINE_VLM_URL", "")
+    with friendly_endpoint("the Modal VLM", vlm, hint="Is the endpoint up?"):
+        main()

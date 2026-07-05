@@ -5,8 +5,14 @@ The two specs in [`../spec/`](../spec/) are the source of truth for the design.
 
 ## Map
 
-**Orientation**
-- [quickstart.md](quickstart.md) — point base URLs at the proxy → record → replay → measure, with runnable snippets.
+**Start here (reading order)**
+- [concepts.md](concepts.md) — **step 0**: the one-page mental model — the four seams and the record → faithful-replay → counterfactual → gate lifecycle as a single arc. Read this first.
+- [quickstart.md](quickstart.md) — run it: one green command, then point base URLs at the proxy → record → replay → measure, with runnable snippets.
+- [api.md](api.md) — reference for the frozen `core/` contract plus the public `fidelity` / `proxy` / `regression` / `adapters` surfaces (real signatures).
+- [writing-an-adapter.md](writing-an-adapter.md) — teach Plumbline a new runtime: the 7-method `Adapter` contract, classify-vs-reconstruct seams, and an annotated minimal adapter.
+- [faq.md](faq.md) — which extra to install, `ModuleNotFoundError` / `ConnectionRefused` fixes, console script vs `python -m`.
+
+**Scope & guarantees**
 - [limitations.md](limitations.md) — the honest scope audit: what works, what's scoped to a regime, what isn't built. Read before assuming a headline capability.
 - [determinism-envelope.md](determinism-envelope.md) — exactly what is guaranteed bit-identical (model I/O) and what is not (the wall-clock scheduler).
 

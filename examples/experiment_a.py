@@ -31,6 +31,11 @@ from plumbline.bench.leaderboard import LabeledScene
 from plumbline.bench.openai_client import chat_captioner, chat_decider
 from plumbline.bench.verbosity import linspace, run_verbosity_sweep
 
+try:
+    from examples._env import friendly_endpoint
+except ImportError:  # `python examples/experiment_a.py`: examples/ is on sys.path, not repo root
+    from _env import friendly_endpoint
+
 BASE_URL = os.environ.get("PLUMBLINE_OLLAMA_URL", "http://localhost:11434/v1")
 VLM = os.environ.get("PLUMBLINE_VLM", "moondream")
 DECIDER = os.environ.get("PLUMBLINE_DECIDER", "llama3.2:1b")
@@ -84,4 +89,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with friendly_endpoint("Ollama", BASE_URL, hint="Is Ollama running? (ollama serve)"):
+        main()

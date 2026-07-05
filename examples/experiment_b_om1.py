@@ -31,6 +31,11 @@ from plumbline.core.trace import JSONValue, Payload
 from plumbline.observability.baselines import compare_against_baselines
 from plumbline.regression import Config, FailurePolicy, GoldenSet, gate
 
+try:
+    from examples._env import friendly_endpoint, require_env
+except ImportError:  # run as a script: examples/ is on sys.path, not the repo root
+    from _env import friendly_endpoint, require_env
+
 # The edited rule (the "config change" under test). Deliberately innocuous-looking:
 # a latency dashboard sees identical timing, a text tracer sees fluent output.
 BAD_RULE = (
@@ -65,7 +70,7 @@ def _regressed_decider(llm_url: str) -> "object":
 
 
 def main() -> None:
-    llm_url = os.environ["PLUMBLINE_LLM_URL"].rstrip("/")
+    llm_url = require_env("PLUMBLINE_LLM_URL", "the OM1 Cortex LLM endpoint URL").rstrip("/")
     store = TraceStore(root=os.environ.get("PLUMBLINE_STORE", "./traces-sil"))
     episode_id = os.environ.get("PLUMBLINE_EPISODE", "om1-sil-002")
 
@@ -166,4 +171,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    llm = os.environ.get("PLUMBLINE_LLM_URL", "")
+    with friendly_endpoint("the LLM endpoint", llm, hint="Is the endpoint up?"):
+        main()

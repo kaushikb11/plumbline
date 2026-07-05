@@ -24,6 +24,11 @@ from plumbline.core.recorder import Recorder
 from plumbline.core.store import TraceStore
 from plumbline.proxy.ws import AsyncWSProxy, WsFrame
 
+try:
+    from examples._env import friendly_endpoint, require_env
+except ImportError:  # run as a script: examples/ is on sys.path, not the repo root
+    from _env import friendly_endpoint, require_env
+
 _ENDPOINT = "/ws/captions"
 
 
@@ -73,7 +78,7 @@ async def replay(store: TraceStore, episode_id: str) -> list[WsFrame]:
 
 
 def main() -> None:
-    url = os.environ["PLUMBLINE_WS_URL"]
+    url = require_env("PLUMBLINE_WS_URL", "the wss:// caption-stream URL")
     store = TraceStore()
     episode_id = "modal-ws-validate"
 
@@ -93,4 +98,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    ws = os.environ.get("PLUMBLINE_WS_URL", "")
+    with friendly_endpoint("the WebSocket caption stream", ws, hint="Is the endpoint up?"):
+        main()

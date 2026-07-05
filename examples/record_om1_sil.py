@@ -33,6 +33,11 @@ from plumbline.proxy.http import AsyncHTTPProxy
 from plumbline.proxy.tick import PerCallTickPolicy
 from plumbline.recording import RecordingCoordinator
 
+try:
+    from examples._env import friendly_endpoint, require_env
+except ImportError:  # `python examples/record_om1_sil.py`: examples/ is on sys.path, not repo root
+    from _env import friendly_endpoint, require_env
+
 
 def _cdr_pose_stamped(x: float = 1.0, y: float = 0.5, z: float = 0.30) -> bytes:
     """A CDR-LE PoseStamped-shaped odom message matching OM1's deserializePoseStamped
@@ -81,7 +86,7 @@ async def run() -> None:
     from plumbline.proxy.server import HttpxTransport, make_asgi_app
     from plumbline.transport.zenoh_shim import ZenohSessionAdapter
 
-    upstream = os.environ["PLUMBLINE_UPSTREAM"].rstrip("/")
+    upstream = require_env("PLUMBLINE_UPSTREAM", "the OM1 Cortex LLM endpoint URL").rstrip("/")
     store_root = os.environ.get("PLUMBLINE_STORE", "./traces-sil")
     episode_id = os.environ.get("PLUMBLINE_EPISODE", "om1-sil-001")
     duration = float(os.environ.get("PLUMBLINE_DURATION", "60"))
@@ -146,4 +151,6 @@ async def run() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    upstream_url = os.environ.get("PLUMBLINE_UPSTREAM", "")
+    with friendly_endpoint("the OM1 upstream LLM", upstream_url, hint="Is the endpoint up?"):
+        asyncio.run(run())

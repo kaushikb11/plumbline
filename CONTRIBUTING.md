@@ -49,8 +49,16 @@ ruff format --check plumbline tests              # must be clean
 
 ## Adding a runtime adapter
 
-Implement the `Adapter` protocol in `plumbline/adapters/base.py` (five methods:
-`configure_proxy`, `bus_tap`, `seam_of`, `action_schema`, `clock_hook`).
-`adapters/om1.py` is the worked reference — it is grounded in OM1's real source,
-not assumptions, and run-verified end to end. Build a new adapter against a real
-recorded episode where possible, not a mock.
+Implement the `Adapter` protocol in `plumbline/adapters/base.py` (seven methods:
+`configure_proxy`, `bus_tap`, `seam_of`, `action_schema`, `clock_hook`,
+`reconstruct_caption_to_fuse`, `reconstruct_decide_to_act`) plus an `ActionSchema`
+(`commands` + `parse`). The first five classify or wire live model seams; the two
+`reconstruct_*` hooks *derive* the `CAPTION_TO_FUSE` and `DECIDE_TO_ACT` seams that
+have no model call of their own (use the shared `derived_seam_event` helper).
+`adapters/om1.py` is the worked reference — grounded in OM1's real source, not
+assumptions, and run-verified end to end; `adapters/generic.py` is the bus-less
+contrast (`bus_tap()` returns `None`). Copy `adapters/_template.py` to start, and
+run `assert_conforms(adapter)` to check the contract. The full walkthrough —
+seam taxonomy, the `configure_proxy` env-var vs `config_fields` choice, and an
+annotated minimal adapter — is in [docs/writing-an-adapter.md](docs/writing-an-adapter.md).
+Build a new adapter against a real recorded episode where possible, not a mock.

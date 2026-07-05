@@ -33,6 +33,11 @@ from PIL import Image, ImageDraw
 from plumbline.bench.leaderboard import CaptionerSpec, LabeledScene, run_captioner_leaderboard
 from plumbline.bench.openai_client import chat_captioner, chat_decider
 
+try:
+    from examples._env import friendly_endpoint
+except ImportError:  # `python examples/experiment_c.py`: examples/ is on sys.path, not repo root
+    from _env import friendly_endpoint
+
 BASE_URL = os.environ.get("PLUMBLINE_OLLAMA_URL", "http://localhost:11434/v1")
 # The captioner (VLM) and decider (LLM) can live at separate OpenAI-compatible
 # endpoints — e.g. two Modal deployments (modal/vlm.py, modal/llm.py). Both default to
@@ -126,4 +131,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # VLM_URL/LLM_URL default to BASE_URL (a single local Ollama) but may point at
+    # separate Modal endpoints; name the captioner endpoint in the reachability hint.
+    with friendly_endpoint(
+        "the caption endpoint", VLM_URL, hint="Is Ollama running (ollama serve) / the endpoint up?"
+    ):
+        main()

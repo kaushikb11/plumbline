@@ -67,7 +67,7 @@ Full numbers, honest noise caveats, and the reproducible script are in **[docs/r
 
 ## Install
 
-Python ≥ 3.12. The **core substrate is dependency-free** — `pip install plumbline` pulls in nothing heavy. Install the extras for what you actually do:
+Python ≥ 3.12. The **core substrate is dependency-free** — a bare `pip install -e .` pulls in nothing heavy (Plumbline is not on PyPI yet — install from a clone). Install the extras for what you actually do:
 
 ```bash
 pip install -e "."                    # core: seams, trace, matchers, replayer (stdlib only)
@@ -81,7 +81,16 @@ The `plumbline record` / `replay` CLI needs the `proxy` extra (uvicorn); the run
 
 ## Quickstart
 
-The operator flow is: **point your runtime's base URLs at the proxy → record → replay → gate.** The full runnable walkthrough is in [docs/quickstart.md](docs/quickstart.md); the essentials:
+**Start here — one command, green on a bare install (no extras, no network):**
+
+```bash
+pip install -e .                          # core only, stdlib
+plumbline gate bench/om1_gazebo_gate.py   # replays a real Go2/Gazebo golden trace, exits 0
+```
+
+That runs the committed Gazebo golden episode (`om1-gazebo-maze-003`, 4,095 events) through the regression gate: it must replay byte-identically and pass. This is the same check CI runs on every PR. Then `plumbline list` shows the episodes on disk, and `plumbline diff EPISODE_A EPISODE_B --store …` shows where two runs diverged.
+
+The full operator flow is **point your runtime's base URLs at the proxy → record → replay → gate**; `record`/`replay` run a proxy *server* and need the `proxy` extra (`pip install -e '.[proxy]'`). The full runnable walkthrough is in [docs/quickstart.md](docs/quickstart.md); the essentials:
 
 ### 1. Point your runtime at the proxy (zero source changes)
 
@@ -112,16 +121,17 @@ from plumbline.core.seam import Seam
 replayer = Replayer(store, clock, matchers)
 
 # Faithful: serve every seam from the trace → bit-identical model I/O.
-result = replayer.faithful("go2-gazebo-001")
+result = replayer.faithful("go2-001")
 
 # Counterfactual: swap the captioner; only that seam runs live, the rest is
 # pinned to the trace. Halts and reports the seam + distance if the swap diverges
 # enough that the recorded fused prompt no longer applies.
 result = replayer.counterfactual(
-    "go2-gazebo-001",
+    "go2-001",
     live_frontier={Seam.SENSOR_TO_CAPTION},
     overrides={Seam.SENSOR_TO_CAPTION: new_captioner},
-    on_divergence=DivergencePolicy.HALT,   # the default; divergence is a result, not an error
+    on_divergence=DivergencePolicy.HALT,   # HALT is the recommended policy (invariant 5);
+                                           # on_divergence is required, and divergence is a result, not an error
 )
 ```
 
