@@ -34,6 +34,7 @@ import json
 import os
 import sys
 from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,8 +43,66 @@ if TYPE_CHECKING:
 
 from plumbline.bench.scenes import build_scenes, write_scenes_json
 from plumbline.core.store import TraceStore
+from plumbline.core.trace import Episode
 from plumbline.observability import diff_episodes
 from plumbline.regression import GateResult, GateSpec, gate
+
+_DOCS_URL = "https://github.com/kaushikb11/plumbline/tree/main/docs"
+
+# One message for the missing optional proxy stack. record/replay need BOTH an
+# async HTTP client (httpx) and an ASGI server (uvicorn); the `proxy` extra pulls
+# both. Surfaced as a friendly SystemExit, never a raw ModuleNotFoundError.
+_PROXY_EXTRA_HINT = (
+    "record and replay need the proxy extra (httpx and uvicorn) — "
+    "install it with: pip install 'plumbline[proxy]'"
+)
+
+
+def _plumbline_version() -> str:
+    try:
+        return version("plumbline")
+    except PackageNotFoundError:  # pragma: no cover - source checkout without install
+        return "unknown"
+
+
+class _EpisodeNotFoundError(Exception):
+    """A CLI-level 'episode not in store' — a friendly, path-free message.
+
+    Keeps internal `episodes/<id>/manifest.json` paths out of the user's face and
+    points them at `plumbline list`.
+    """
+
+    def __init__(self, episode_id: str, store_root: object) -> None:
+        super().__init__(
+            f"episode {episode_id!r} not found in store {store_root} — "
+            f"run 'plumbline list --store {store_root}' to see recorded episode ids"
+        )
+
+
+def _load_episode(store: TraceStore, episode_id: str) -> Episode:
+    """Load an episode, translating a missing episode into a friendly error.
+
+    Catches FileNotFoundError and any typed 'NotFound' exception (matched by class
+    name, so it works whether or not a typed core exception lands). Any other
+    failure — e.g. a corrupt trace — is left to propagate unchanged.
+    """
+    try:
+        return store.load_episode(episode_id)
+    except FileNotFoundError as exc:
+        raise _EpisodeNotFoundError(episode_id, store.root) from exc
+    except Exception as exc:
+        if "notfound" in type(exc).__name__.lower():
+            raise _EpisodeNotFoundError(episode_id, store.root) from exc
+        raise
+
+
+def _require_proxy_deps() -> None:
+    """Raise the friendly proxy-extra SystemExit if httpx or uvicorn is missing,
+    BEFORE any of them (or the proxy server module) is imported — so the base
+    install fails with the hint instead of a raw ModuleNotFoundError."""
+    for module_name in ("httpx", "uvicorn"):
+        if importlib.util.find_spec(module_name) is None:
+            raise SystemExit(_PROXY_EXTRA_HINT)
 
 
 def run_gate(spec: GateSpec) -> GateResult:
@@ -97,9 +156,20 @@ def load_gate_spec(path: str) -> GateSpec:
     return spec
 
 
+def run_list(store_root: str) -> int:
+    store = TraceStore(root=store_root)
+    episodes = store.list_episodes()
+    if not episodes:
+        print(f"no recorded episodes in store {store.root}")
+        return 0
+    for episode_id in episodes:
+        print(episode_id)
+    return 0
+
+
 def run_diff(episode_a: str, episode_b: str, store_root: str) -> int:
     store = TraceStore(root=store_root)
-    diff = diff_episodes(store.load_episode(episode_a), store.load_episode(episode_b))
+    diff = diff_episodes(_load_episode(store, episode_a), _load_episode(store, episode_b))
     print(diff.as_text())
     first = diff.first_divergence
     print("identical" if first is None else f"first divergence at {first.seam.value}")
@@ -121,7 +191,7 @@ def run_export(store_root: str, episode: str, out_path: str, fmt: str) -> int:
     from plumbline.observability.otlp import write_otlp
 
     store = TraceStore(root=store_root)
-    loaded = store.load_episode(episode)
+    loaded = _load_episode(store, episode)
     if fmt == "otlp":
         write_otlp(loaded, out_path)
     else:  # telemetry
@@ -136,7 +206,7 @@ def _serve(app: object, host: str, port: int) -> None:  # pragma: no cover - thi
     try:
         uvicorn = importlib.import_module("uvicorn")
     except ModuleNotFoundError as exc:
-        raise SystemExit("record/replay need uvicorn — pip install 'plumbline[proxy]'") from exc
+        raise SystemExit(_PROXY_EXTRA_HINT) from exc
     uvicorn.run(app, host=host, port=port)
 
 
@@ -161,6 +231,7 @@ def _build_adapter(name: str) -> "ReconstructingAdapter":
 def run_record(
     upstream: str, store_root: str, episode: str, host: str, port: int, adapter: str | None = None
 ) -> int:
+    _require_proxy_deps()  # friendly hint before importing httpx / the proxy server
     import httpx
 
     from plumbline.core.clock import VirtualClock
@@ -195,9 +266,16 @@ def run_record(
 
 
 def run_replay(store_root: str, episode: str, host: str, port: int) -> int:
-    from plumbline.proxy.server import make_replay_asgi_app
+    _require_proxy_deps()  # friendly hint before importing the proxy server (httpx)
 
     store = TraceStore(root=store_root)
+    # Pre-flight the episode so a typo fails fast with a friendly message instead
+    # of binding the port and then 404-ing every request at replay time.
+    if episode not in store.list_episodes():
+        raise _EpisodeNotFoundError(episode, store.root)
+
+    from plumbline.proxy.server import make_replay_asgi_app
+
     app = make_replay_asgi_app(store, episode_id=episode)
     print(f"replaying episode {episode!r} from {store.root} (listening on {host}:{port})")
     _serve(app, host, port)
@@ -205,15 +283,31 @@ def run_replay(store_root: str, episode: str, host: str, port: int) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="plumbline", description="Plumbline CLI (§11)")
+    parser = argparse.ArgumentParser(
+        prog="plumbline",
+        description="Record, replay, and regression-test a robot runtime's model calls.",
+        epilog=f"Docs: {_DOCS_URL}",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_plumbline_version()}",
+        help="Show the installed Plumbline version and exit",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    record_parser = subparsers.add_parser("record", help="Run the recording proxy server (§4.2)")
+    record_parser = subparsers.add_parser(
+        "record", help="Run the recording proxy: forward to the provider and capture each call"
+    )
     record_parser.add_argument("--upstream", required=True, help="Real provider base URL")
     record_parser.add_argument("--store", required=True, help="TraceStore root directory")
     record_parser.add_argument("--episode", required=True, help="Episode id to record into")
-    record_parser.add_argument("--host", default="127.0.0.1")
-    record_parser.add_argument("--port", type=int, default=8900)
+    record_parser.add_argument(
+        "--host", default="127.0.0.1", help="Host to bind the proxy server to (default: 127.0.0.1)"
+    )
+    record_parser.add_argument(
+        "--port", type=int, default=8900, help="Port to bind the proxy server to (default: 8900)"
+    )
     record_parser.add_argument(
         "--adapter",
         choices=("om1", "g1", "generic"),
@@ -221,33 +315,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Reconstruct a full four-seam episode via this adapter (else model seams only)",
     )
 
-    replay_parser = subparsers.add_parser("replay", help="Run the replaying proxy server (§4.2)")
+    replay_parser = subparsers.add_parser(
+        "replay", help="Run the replaying proxy: serve recorded responses, never hitting upstream"
+    )
     replay_parser.add_argument("--store", required=True, help="TraceStore root directory")
     replay_parser.add_argument("--episode", required=True, help="Episode id to serve")
-    replay_parser.add_argument("--host", default="127.0.0.1")
-    replay_parser.add_argument("--port", type=int, default=8900)
+    replay_parser.add_argument(
+        "--host", default="127.0.0.1", help="Host to bind the proxy server to (default: 127.0.0.1)"
+    )
+    replay_parser.add_argument(
+        "--port", type=int, default=8900, help="Port to bind the proxy server to (default: 8900)"
+    )
+
+    list_parser = subparsers.add_parser(
+        "list", aliases=["ls"], help="List the episode ids recorded in a store"
+    )
+    list_parser.add_argument("--store", required=True, help="TraceStore root directory")
 
     gate_parser = subparsers.add_parser(
-        "gate", help="Run the regression gate over golden episodes (§8)"
+        "gate", help="Run the CI regression gate over golden episodes and fail on behavioral drift"
     )
     gate_parser.add_argument("config", help="Python file defining build() -> GateSpec")
     gate_parser.add_argument("--emit-feed", help="Write the gate feed JSON (regression dashboard)")
 
-    diff_parser = subparsers.add_parser("diff", help="Trace-diff two recorded episodes (§11)")
-    diff_parser.add_argument("episode_a")
-    diff_parser.add_argument("episode_b")
+    diff_parser = subparsers.add_parser(
+        "diff", help="Trace-diff two recorded episodes: show where and at which seam they diverged"
+    )
+    diff_parser.add_argument("episode_a", help="First episode id to compare")
+    diff_parser.add_argument("episode_b", help="Second episode id to compare")
     diff_parser.add_argument("--store", required=True, help="TraceStore root directory")
 
     export_parser = subparsers.add_parser(
-        "export", help="Export an episode as OTLP/JSON spans or a telemetry feed (§11)"
+        "export", help="Export an episode as OTLP/JSON spans or a telemetry feed"
     )
-    export_parser.add_argument("episode")
+    export_parser.add_argument("episode", help="Episode id to export")
     export_parser.add_argument("--store", required=True, help="TraceStore root directory")
     export_parser.add_argument("-o", "--out", required=True, help="Output JSON path")
-    export_parser.add_argument("--format", choices=("otlp", "telemetry"), default="otlp")
+    export_parser.add_argument(
+        "--format",
+        choices=("otlp", "telemetry"),
+        default="otlp",
+        help="Output format: otlp (OTLP/JSON spans) or telemetry (feed) (default: otlp)",
+    )
 
     scenes_parser = subparsers.add_parser(
-        "scenes", help="Author scenes.json for the Experiment-C leaderboard (§4)"
+        "scenes", help="Author a scenes.json for the Experiment-C fidelity leaderboard"
     )
     scenes_parser.add_argument("image_dir", help="Directory of image files")
     scenes_parser.add_argument("labels", help="JSON object {filename: render_g}")
@@ -275,15 +387,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 except OSError as exc:
                     print(f"plumbline gate: could not write feed: {exc}", file=sys.stderr)
             return 0 if result.passed else 1
+        if args.command in ("list", "ls"):
+            return run_list(args.store)
         if args.command == "diff":
             return run_diff(args.episode_a, args.episode_b, args.store)
         if args.command == "scenes":
             return run_scenes(args.image_dir, args.labels, args.out)
         if args.command == "export":
             return run_export(args.store, args.episode, args.out, args.format)
-    except (ValueError, FileNotFoundError, TypeError, KeyError) as exc:
-        # Bad user input (missing config/store/episode/labels) — a clean message,
-        # not a raw traceback. (SystemExit from _serve propagates unchanged.)
+    except _EpisodeNotFoundError as exc:
+        # A mistyped/unknown episode id — the friendly message already names the
+        # store and points at `plumbline list`; no internal manifest path leaks.
+        print(f"plumbline {args.command}: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, OSError, TypeError, KeyError) as exc:
+        # Bad user input (missing config/store/episode/labels) or an unusable store
+        # path — a clean message, not a raw traceback. OSError subsumes
+        # FileNotFoundError. (SystemExit from _serve / the proxy-extra guard
+        # propagates unchanged.)
         print(f"plumbline {args.command}: {exc}", file=sys.stderr)
         return 1
     return 2  # unreachable: argparse requires a known subcommand
