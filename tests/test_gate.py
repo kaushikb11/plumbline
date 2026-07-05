@@ -288,12 +288,12 @@ def test_decision_gate_catches_low_surface_flip_missed_by_surface_gate() -> None
     assert surface.passed is True  # MISS: caption within threshold -> old decision served
     assert surface.max_drift == 0.0
 
-    caught = gate(store, golden, config, 0.1, decision=DecisionGate(_probe, k=3.0))
+    caught = gate(store, golden, config, 0.0, decision=DecisionGate(_probe))  # default: p-value
     assert caught.passed is False  # CATCH: the decision flips avoid -> advance
     assert caught.per_episode[0].decision_divergence == 1.0
     assert caught.per_episode[0].sigma == 0.0
     assert caught.per_episode[0].divergence_seam is Seam.SENSOR_TO_CAPTION
-    assert caught.threshold_units == "sigma"
+    assert caught.threshold_units == "1 - p_value"  # alpha (permutation) is the default
 
 
 def test_decision_gate_does_not_flag_a_benign_rephrasing() -> None:
@@ -302,7 +302,7 @@ def test_decision_gate_does_not_flag_a_benign_rephrasing() -> None:
     config = _obstacle_episode(store, "an obstacle sitting forty centimeters to the robot left")
     golden = GoldenSet(store)
     golden.add("obs")
-    result = gate(store, golden, config, 0.1, decision=DecisionGate(_probe, k=3.0))
+    result = gate(store, golden, config, 0.0, decision=DecisionGate(_probe))  # default: p-value
     assert result.passed is True
     assert result.per_episode[0].decision_divergence == 0.0
 
@@ -325,7 +325,10 @@ def test_decision_gate_pvalue_mode_and_sigma_floor() -> None:
     # now FINITE (excess/max(sigma, 1/n)) not infinite, and still fails.
     import math
 
-    k_caught = gate(store, golden, config, 0.0, decision=DecisionGate(_probe, n=16, k=3.0))
+    # alpha=None opts INTO the legacy k mode (alpha is the default otherwise).
+    k_caught = gate(
+        store, golden, config, 0.0, decision=DecisionGate(_probe, n=16, alpha=None, k=3.0)
+    )
     assert k_caught.passed is False
     assert math.isfinite(k_caught.per_episode[0].drift)
     assert k_caught.per_episode[0].drift == 16.0  # 1.0 / (1/16), the floored n_sigma
@@ -338,3 +341,27 @@ def test_decision_gate_pvalue_mode_and_sigma_floor() -> None:
     benign = gate(store2, golden2, config2, 0.0, decision=DecisionGate(_probe, alpha=0.05))
     assert benign.passed is True
     assert gate_mod is not None  # import used
+
+
+def test_decision_gate_flags_episode_with_no_frontier_events() -> None:
+    # Q20: an episode that never hit the frontier seam has nothing to gate — it must
+    # be reported UNSCORED (scored=False), not silently as a clean pass.
+    store = TraceStore()
+    config = _obstacle_episode(store, "an obstacle sitting forty centimeters to the robot left")
+    # A second golden episode with only a DECIDE_TO_ACT event (no SENSOR_TO_CAPTION,
+    # the frontier seam the decision gate scores).
+    recorder = Recorder(store, VirtualClock())
+    recorder.open_episode("no-frontier", {})
+    act = Payload(inline={"action": "advance"})
+    recorder.record(_event("no-frontier", 0, Seam.DECIDE_TO_ACT, 0, act, act))
+    recorder.close_episode("no-frontier")
+
+    golden = GoldenSet(store)
+    golden.add("obs")
+    golden.add("no-frontier")
+
+    result = gate(store, golden, config, 0.0, decision=DecisionGate(_probe))
+    by_id = {d.episode_id: d for d in result.per_episode}
+    assert by_id["no-frontier"].scored is False  # flagged, not a silent clean pass
+    assert by_id["no-frontier"].diverged is False
+    assert by_id["obs"].scored is True

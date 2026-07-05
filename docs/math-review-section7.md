@@ -86,7 +86,8 @@ now confirms these rather than deciding them from scratch.
   `p < alpha` — calibrated, normality-free — with `k` kept as a documented legacy
   placeholder. The "σ-units" label was also imprecise (σ is the null *mean*, not the
   null *SD*, so `excess/σ` is a relative excess, not a z-score); the p-value sidesteps
-  this. **Q15/Q16 → recommend: adopt `alpha` as the default; keep `k` labeled legacy.**
+  this. **Q15/Q16 → RESOLVED: `alpha=0.05` (permutation) is now the DEFAULT gate mode;
+  `k` is opt-in via `alpha=None`, labeled legacy.**
 - **Q12 — σ floored at 1/N.** The σ=0 → n_sigma=∞ hair-trigger is the zero-frequency
   problem; the standard fix is additive smoothing / a minimum-detectable-effect floor
   ([additive smoothing](https://en.wikipedia.org/wiki/Additive_smoothing), [MDE](https://www.mdrc.org/work/publications/why-estimates-below-minimum-detectable-effect-can-be-statistically-significant)):
@@ -108,6 +109,14 @@ now confirms these rather than deciding them from scratch.
   candidate-side size remains the only residual.)
 - **Q19 — resolved.** `recorded_decision_drift` now errors on a <2-label pool instead
   of silently using σ=0.
+- **Q5 — resolved (understatement positive control added).** `salient_artifact` guarded
+  only the *over*-statement direction; `salient_sensitivity` (metrics.py) is the mirror
+  — a prompt that OMITS a decision-critical fact plus the caption carrying it must
+  produce loss > 0, else the salient is too weak and fusion_loss under-reports. Run
+  BOTH per (salient, decider) pair. Pinned by `test_fidelity.py`.
+- **Q20 — resolved (unscored episodes flagged).** A decision-mode episode with no
+  frontier-seam events now reports `EpisodeDrift.scored = False` (and logs), so a
+  "nothing to gate" pass can't masquerade as "scored and clean". Pinned by `test_gate.py`.
 
 Full memo and sources: this section + the Findings above; the code changes are pinned
 by `tests/test_fidelity.py` (permutation), `tests/test_gate.py` (alpha mode + σ floor),

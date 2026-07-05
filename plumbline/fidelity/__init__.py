@@ -49,6 +49,7 @@ from plumbline.fidelity.metrics import (
     default_salient,
     fusion_loss,
     salient_artifact,
+    salient_sensitivity,
 )
 
 __all__ = [
@@ -77,6 +78,7 @@ __all__ = [
     "recorded_distribution",
     "recorded_labels",
     "salient_artifact",
+    "salient_sensitivity",
     "sample_labels",
     "sample_recorded_decisions",
     "samples_episode_id",

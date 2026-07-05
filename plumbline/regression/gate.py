@@ -92,6 +92,7 @@ class EpisodeDrift:
     divergence_distance: float | None
     decision_divergence: float | None = None  # div(D(candidate), D(golden)), decision mode
     sigma: float | None = None  # the decider's noise floor, decision mode
+    scored: bool = True  # False if no frontier-seam event was scored (nothing to gate, §Q20)
 
 
 @dataclass(frozen=True)
@@ -110,15 +111,17 @@ class DecisionGate:
     decider: DeciderFn
     n: int = 32
     # Two thresholding modes (§14.6 HUMAN REVIEW; docs/math-review-section7.md):
-    #  - alpha (RECOMMENDED, distribution-free): fail iff the permutation p-value of
-    #    the observed divergence against the golden's own split-half null is < alpha.
+    #  - alpha (DEFAULT, distribution-free): fail iff the permutation p-value of the
+    #    observed divergence against the golden's own split-half null is < alpha.
     #    Calibrated and assumption-free — the right tool for a metric that clusters
     #    near 0/1, where a sigma-multiple's normality assumption fails (arXiv 2412.12148).
-    #  - k (legacy): fail iff excess/max(sigma, 1/n) > k. A sigma-multiple placeholder;
-    #    k=3 is uncalibrated. The sigma floor at 1/n (the estimator resolution) removes
-    #    the old sigma=0 -> infinity hair-trigger.
-    # alpha takes precedence when set; k is used only when alpha is None.
-    alpha: float | None = None
+    #    (With the default trials=32 the smallest achievable p is 1/33 ≈ 0.03, so a
+    #    real flip fires at alpha=0.05; raise `trials` for a stricter alpha.)
+    #  - k (legacy, opt in with alpha=None): fail iff excess/max(sigma, 1/n) > k. A
+    #    sigma-multiple placeholder; k=3 is uncalibrated. The sigma floor at 1/n (the
+    #    estimator resolution) removes the old sigma=0 -> infinity hair-trigger.
+    # alpha takes precedence when set (the default); pass alpha=None to use k.
+    alpha: float | None = 0.05
     k: float = 3.0
     label: DecisionLabel = canonical_label
     divergence: Divergence = total_variation
@@ -303,6 +306,15 @@ def _decision_gate(
             if worst is None or stat > worst_stat:
                 worst, worst_stat = score, stat
         episode_stat = max(stats, default=0.0)
+        if not stats:
+            # Q20: an episode that never hit the frontier seam has nothing to gate —
+            # a pass here is "not scored", not "scored and clean". Flag it distinctly
+            # (and log it) so it can't masquerade as a clean pass.
+            _log.warning(
+                "decision gate: episode %r had no %s events to score (reported unscored)",
+                episode.episode_id,
+                seam.value,
+            )
         drifts.append(
             EpisodeDrift(
                 episode_id=episode.episode_id,
@@ -312,6 +324,7 @@ def _decision_gate(
                 divergence_distance=worst.divergence if worst else None,
                 decision_divergence=worst.divergence if worst else None,
                 sigma=worst.sigma if worst else None,
+                scored=bool(stats),
             )
         )
     passed = bool(drifts) and _passes([d.drift for d in drifts], threshold, policy, quantile)

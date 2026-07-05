@@ -163,3 +163,19 @@ def test_decision_drift_carries_a_permutation_pvalue() -> None:
     assert flip.p_value < 0.05  # a real flip is significant
     preserved = decision_drift(_probe, "obstacle ahead", "an obstacle just ahead", 16)
     assert preserved.p_value == 1.0  # no divergence -> not significant
+
+
+def test_salient_sensitivity_is_the_understatement_positive_control() -> None:
+    # Q5: salient_artifact guards OVER-statement; salient_sensitivity guards the
+    # opposite — a salient too weak to resurface a dropped decision-critical fact.
+    # Both must be run per (salient, decider) pair before trusting fusion_loss.
+    from plumbline.fidelity import salient_artifact, salient_sensitivity
+
+    # Positive control: a prompt WITHOUT the obstacle fact + the caption carrying it
+    # -> re-adding it flips the decision -> loss > 0 (the salient works).
+    sensitivity = salient_sensitivity(_probe, "the path looks clear", "an obstacle is ahead", 32)
+    assert sensitivity > 0.0
+
+    # Negative control (the existing guard): re-adding info already present -> ~0.
+    artifact = salient_artifact(_probe, "an obstacle is ahead", "obstacle ahead", 32)
+    assert artifact == 0.0

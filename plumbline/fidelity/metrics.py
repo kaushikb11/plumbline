@@ -207,3 +207,41 @@ def salient_artifact(
         decider, f"{fused_prompt_with_caption} {salient(caption)}", n, label=label
     )
     return max(0.0, divergence(d_f, d_augmented) - sigma)
+
+
+def salient_sensitivity(
+    decider: DeciderFn,
+    fused_prompt_without_fact: str,
+    caption_with_fact: str,
+    n: int,
+    *,
+    salient: Callable[[str], str] = default_salient,
+    label: DecisionLabel = canonical_label,
+    divergence: Divergence = total_variation,
+) -> float:
+    """POSITIVE control for the salient operation (§7.4, §14.6 — HUMAN REVIEW; Q5).
+
+    The mirror of `salient_artifact`. Run with a fused prompt that OMITS a
+    decision-critical fact, and the caption that carries it. Returns the decision
+    change from re-emphasizing the caption, beyond the noise floor — identical to a
+    single-caption `fusion_loss` term:
+
+        max(0, div(D(F_without), D(F_without + salient(caption_with_fact))) - sigma)
+
+    It should be > 0: if re-adding a caption that DOES carry a decision-flipping fact
+    produces ~0, the `salient` is too weak to resurface dropped content and
+    fusion_loss will UNDERSTATE the Fuser's loss (the un-flattering direction that
+    `salient_artifact` does not cover). Run BOTH controls per (salient, decider)
+    pair before trusting fusion_loss: `salient_artifact` ~ 0 AND `salient_sensitivity`
+    > 0. (Choose `caption_with_fact` as one known to flip the decider vs
+    `fused_prompt_without_fact` — a designed positive control, not an arbitrary caption.)
+    """
+    return fusion_loss(
+        decider,
+        fused_prompt_without_fact,
+        [caption_with_fact],
+        n,
+        salient=salient,
+        label=label,
+        divergence=divergence,
+    )
