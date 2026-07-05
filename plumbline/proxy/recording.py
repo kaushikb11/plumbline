@@ -50,6 +50,34 @@ def classify_seam(request: Payload, ctx: Context) -> Seam:
     return Seam.FUSE_TO_DECIDE
 
 
+class ReplayMiss(KeyError):
+    """Faithful replay has no (further) recorded response for a request digest (§4.2).
+
+    A `KeyError` subclass so the HTTP layer's `except KeyError -> 404` and existing
+    callers keep working, but message-rich: it echoes the offending request digest
+    and how many occurrences were recorded versus already served, distinguishing a
+    request that was never recorded from one whose recorded occurrences are all
+    exhausted (an over-consumption divergence).
+    """
+
+    def __init__(self, request_digest: str, recorded: int, consumed: int) -> None:
+        self.request_digest = request_digest
+        self.recorded = recorded
+        self.consumed = consumed
+        if recorded == 0:
+            detail = f"no recorded response for request {request_digest}"
+        else:
+            detail = (
+                f"request {request_digest} was recorded {recorded} time(s) but has "
+                f"already been replayed {consumed} time(s); this extra occurrence has "
+                "no recorded response (the runtime issued more calls than recorded)"
+            )
+        super().__init__(detail)
+
+    def __str__(self) -> str:
+        return str(self.args[0]) if self.args else ""
+
+
 class ProxyDivergence(Exception):
     """Raised on a halted counterfactual replay (§6.4): the live request no
     longer matches the recording, so no recorded response is served."""
@@ -148,12 +176,13 @@ class ReplayingProxy:
     def faithful(self, request: Payload, ctx: Context) -> Payload:
         """Serve the recorded response for the next occurrence of this request digest
         (§4.2). Repeated identical requests are served in record order; an extra
-        occurrence beyond what was recorded is a divergence, surfaced as a KeyError."""
+        occurrence beyond what was recorded is a divergence, surfaced as a ReplayMiss
+        (a KeyError subclass, so the HTTP layer's 404 mapping is unchanged)."""
         digest = self.digest(request)
         events = self._by_digest.get(digest, [])
         index = self._digest_cursor.get(digest, 0)
         if index >= len(events):
-            raise KeyError(f"no recorded response for request {digest}")
+            raise ReplayMiss(digest, recorded=len(events), consumed=index)
         self._digest_cursor[digest] = index + 1
         return events[index].response
 

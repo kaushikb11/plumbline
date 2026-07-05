@@ -13,7 +13,7 @@ from plumbline.core.seam import Seam
 from plumbline.core.trace import Episode, JSONValue, Payload, SeamEvent, canonicalize
 from plumbline.observability.baselines import BaselineComparison, MonitorVerdict
 from plumbline.observability.feed import baseline_feed, episode_telemetry, gate_feed
-from plumbline.regression.gate import EpisodeDrift, FailurePolicy, GateResult
+from plumbline.regression.gating import EpisodeDrift, FailurePolicy, GateResult
 
 _GRAFANA_DIR = Path(__file__).resolve().parent.parent / "plumbline" / "observability" / "grafana"
 

@@ -43,6 +43,35 @@ from plumbline.core.trace import (
 )
 
 
+class EpisodeNotOpen(KeyError):
+    """An episode was written to (or closed) before `open_episode()` registered it.
+
+    A `KeyError` subclass so existing callers that catch `KeyError` keep working,
+    but message-rich instead of the cryptic bare `KeyError: '<id>'`.
+    """
+
+    def __init__(self, episode_id: str) -> None:
+        self.episode_id = episode_id
+        super().__init__(f"episode {episode_id!r} not open; call open_episode() first")
+
+    def __str__(self) -> str:
+        return str(self.args[0]) if self.args else ""
+
+
+class EpisodeNotFound(FileNotFoundError):
+    """No episode with this id exists in the trace store.
+
+    A `FileNotFoundError` subclass so callers that catch the OS error keep working,
+    but it names both the episode id and the store root instead of surfacing a raw
+    path from deep inside the read.
+    """
+
+    def __init__(self, episode_id: str, root: Path) -> None:
+        self.episode_id = episode_id
+        self.store_root = root
+        super().__init__(f"episode {episode_id!r} not found in trace store at {root}")
+
+
 @dataclass
 class _OpenEpisode:
     metadata: Mapping[str, JSONValue]
@@ -79,6 +108,8 @@ class TraceStore:
         self._persist_manifest(manifest.episode_id)
 
     def append_event(self, episode_id: str, event: SeamEvent) -> None:
+        if episode_id not in self._open:
+            raise EpisodeNotOpen(episode_id)
         open_ep = self._open[episode_id]
         line = canonical_dumps(_event_to_json(event))
         with (self._episode_dir(episode_id) / "events.jsonl").open("a", encoding="utf-8") as fh:
@@ -98,6 +129,8 @@ class TraceStore:
         # close_episode writes the final seam index.
 
     def close_episode(self, episode_id: str) -> None:
+        if episode_id not in self._open:
+            raise EpisodeNotOpen(episode_id)
         self._persist_manifest(episode_id)
         del self._open[episode_id]
 
@@ -135,7 +168,10 @@ class TraceStore:
         return Episode(episode_id=episode_id, events=tuple(events), metadata=manifest.metadata)
 
     def load_manifest(self, episode_id: str) -> EpisodeManifest:
-        raw = _loads((self._episode_dir(episode_id) / "manifest.json").read_text(encoding="utf-8"))
+        manifest_path = self._episode_dir(episode_id) / "manifest.json"
+        if not manifest_path.exists():
+            raise EpisodeNotFound(episode_id, self._root)
+        raw = _loads(manifest_path.read_text(encoding="utf-8"))
         return _manifest_from_json(raw)
 
     def list_episodes(self) -> tuple[str, ...]:

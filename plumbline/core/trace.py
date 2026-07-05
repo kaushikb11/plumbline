@@ -93,6 +93,70 @@ class SeamEvent:
     latency_ms: float
 
 
+class DigestMismatch(ValueError):
+    """A SeamEvent's `request_digest` does not match `canonicalize(request).digest`.
+
+    Raised by the recorder at record time. A wrong or empty digest records fine but
+    is silently *unreplayable*: faithful replay keys on `request_digest`, so a bad
+    digest means the recorded response is never served. Building events with
+    `make_seam_event` (which computes the digest for you) avoids this entirely.
+    """
+
+    def __init__(self, *, episode_id: str, seq: int, recorded: str, expected: str) -> None:
+        self.episode_id = episode_id
+        self.seq = seq
+        self.recorded = recorded
+        self.expected = expected
+        super().__init__(
+            f"request_digest mismatch for event seq={seq} in episode {episode_id!r}: "
+            f"event carries {recorded!r} but canonicalize(request).digest is {expected!r}. "
+            "The digest must be the content hash of the request; build events with "
+            "make_seam_event(...) so it is computed for you."
+        )
+
+
+def make_seam_event(
+    *,
+    episode_id: str,
+    seq: int,
+    seam: Seam,
+    logical_tick: int,
+    request: Payload,
+    response: Payload,
+    model_id: str | None = None,
+    params: Mapping[str, JSONValue] | None = None,
+    wall_ts: float = 0.0,
+    latency_ms: float = 0.0,
+) -> SeamEvent:
+    """Recommended way to build a `SeamEvent` by hand (§3.2, §5.2).
+
+    `SeamEvent` has eleven required fields with no defaults, including
+    `request_digest`, which must equal `canonicalize(request).digest` — a wrong or
+    empty digest records fine but is silently unreplayable. This factory
+    AUTO-COMPUTES the digest from `request` and defaults the bookkeeping fields
+    (`model_id`, `params`, `wall_ts`, `latency_ms`), so hand-built events cannot
+    drift from their request.
+
+    This is an additive constructor helper: it does not modify the frozen
+    `SeamEvent` dataclass (precedent: `derived_seam_event` in `adapters/base.py`).
+    The recording proxy already computes digests correctly; use this for tests,
+    fixtures, and adapters that assemble events directly.
+    """
+    return SeamEvent(
+        episode_id=episode_id,
+        seq=seq,
+        seam=seam,
+        logical_tick=logical_tick,
+        wall_ts=wall_ts,
+        request=request,
+        response=response,
+        model_id=model_id,
+        params=params if params is not None else {},
+        request_digest=canonicalize(request).digest,
+        latency_ms=latency_ms,
+    )
+
+
 @dataclass(frozen=True)
 class Episode:
     """An ordered sequence of events sharing one episode id — one robot run (§3.2)."""

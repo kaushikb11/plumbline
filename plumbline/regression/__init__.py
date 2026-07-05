@@ -1,6 +1,6 @@
 """Regression gate — CI for robot behavior (engineering spec §8)."""
 
-from plumbline.regression.gate import (
+from plumbline.regression.gating import (
     Config,
     DecisionGate,
     EpisodeDrift,

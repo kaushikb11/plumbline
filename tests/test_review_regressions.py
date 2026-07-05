@@ -131,7 +131,7 @@ def test_fusion_loss_rejects_mismatched_weights_length() -> None:
 
 
 def test_gate_policies_are_differentiated() -> None:
-    from plumbline.regression.gate import FailurePolicy, _passes
+    from plumbline.regression.gating import FailurePolicy, _passes
 
     # mean passes, max fails -> ANY != AGGREGATE
     spread = [0.0, 0.0, 0.0, 0.0, 0.4]
@@ -144,7 +144,7 @@ def test_gate_policies_are_differentiated() -> None:
 
 
 def test_quantile_nearest_rank_is_not_off_by_one() -> None:
-    from plumbline.regression.gate import FailurePolicy, _passes
+    from plumbline.regression.gating import FailurePolicy, _passes
 
     # Exactly the top 5% are bad: nearest-rank P95 (index 94 of 100) is 0.0 -> pass.
     # The old int(0.95*100)=95 wrongly read index 95 (=1.0) and failed.

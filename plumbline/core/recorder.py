@@ -20,7 +20,14 @@ from collections.abc import Mapping
 
 from plumbline.core.clock import VirtualClock
 from plumbline.core.store import TraceStore
-from plumbline.core.trace import ConfigSnapshot, EpisodeManifest, JSONValue, SeamEvent
+from plumbline.core.trace import (
+    ConfigSnapshot,
+    DigestMismatch,
+    EpisodeManifest,
+    JSONValue,
+    SeamEvent,
+    canonicalize,
+)
 
 
 class Recorder:
@@ -29,6 +36,19 @@ class Recorder:
         self._clock = clock
 
     def record(self, event: SeamEvent) -> None:
+        # Validate, never recompute: the recorder must not alter captured model I/O
+        # (§3.5, zero-touch). A digest that does not match its request records fine
+        # but is silently unreplayable, so reject it loudly here rather than let it
+        # rot in the trace. The proxy computes digests correctly, so real recordings
+        # pass; hand-built events should use make_seam_event (which computes it).
+        expected = canonicalize(event.request).digest
+        if event.request_digest != expected:
+            raise DigestMismatch(
+                episode_id=event.episode_id,
+                seq=event.seq,
+                recorded=event.request_digest,
+                expected=expected,
+            )
         self._store.append_event(event.episode_id, event)
 
     def open_episode(self, episode_id: str, metadata: Mapping[str, JSONValue]) -> None:

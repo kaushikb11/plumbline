@@ -6,7 +6,7 @@ from plumbline.core.seam import Seam
 from plumbline.core.trace import Episode, JSONValue, Payload, SeamEvent, canonicalize
 from plumbline.observability.baselines import BaselineComparison, MonitorVerdict
 from plumbline.observability.feed import baseline_feed, episode_telemetry, gate_feed
-from plumbline.regression.gate import EpisodeDrift, FailurePolicy, GateResult
+from plumbline.regression.gating import EpisodeDrift, FailurePolicy, GateResult
 
 
 def _event(seq: int, seam: Seam, latency_ms: float, response: JSONValue | None = None) -> SeamEvent:

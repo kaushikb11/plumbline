@@ -21,7 +21,7 @@ from plumbline.proxy.otel import (
     GEN_AI_USAGE_OUTPUT_TOKENS,
     seam_event_attributes,
 )
-from plumbline.regression.gate import GateResult
+from plumbline.regression.gating import GateResult
 
 
 def episode_telemetry(episode: Episode) -> dict[str, JSONValue]:

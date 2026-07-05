@@ -102,8 +102,41 @@ def test_cli_replay_wires_the_server(tmp_path: Path, monkeypatch: pytest.MonkeyP
     def fake_serve(app: object, host: str, port: int) -> None:
         captured.update(app=app, port=port)
 
+    # Seed episode "ep" so replay's pre-flight existence check passes (a missing
+    # episode now fails fast with a friendly message rather than binding the port).
+    _seed_episode(tmp_path, "ep")
+
     monkeypatch.setattr(cli, "_serve", fake_serve)
     code = cli.main(["replay", "--store", str(tmp_path), "--episode", "ep", "--port", "9001"])
     assert code == 0
     assert captured["port"] == 9001
     assert callable(captured["app"])
+
+
+def test_cli_replay_missing_episode_fails_fast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A typo'd episode fails before the server is wired, with a discovery hint.
+    monkeypatch.setattr(cli, "_serve", lambda *a: pytest.fail("server should not start"))
+    code = cli.main(["replay", "--store", str(tmp_path), "--episode", "nope", "--port", "9001"])
+    assert code == 1
+
+
+def _seed_episode(store_root: Path, episode_id: str) -> None:
+    from plumbline import make_seam_event
+    from plumbline.core.seam import Seam
+    from plumbline.core.trace import Payload
+
+    recorder = Recorder(TraceStore(root=store_root), VirtualClock())
+    recorder.open_episode(episode_id, {})
+    recorder.record(
+        make_seam_event(
+            episode_id=episode_id,
+            seq=0,
+            seam=Seam.SENSOR_TO_CAPTION,
+            logical_tick=0,
+            request=Payload(inline={"messages": [{"role": "user", "content": "hi"}]}),
+            response=Payload(inline={"choices": [{"message": {"content": "a scene"}}]}),
+        )
+    )
+    recorder.close_episode(episode_id)
