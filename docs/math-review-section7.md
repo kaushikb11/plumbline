@@ -237,37 +237,52 @@ Each entry: the choice, the alternative, how it could flatter the metric, and th
 
 ---
 
-## 4. Open questions for the reviewer
+## 4. Open questions — PRE-FILLED for one-glance confirmation
 
-Answer YES/NO (or the one-line decision indicated). Q1–Q2 correspond to the Findings; the rest to the register/edge cases.
+Every question below carries a recommended answer. **13 are already RESOLVED in code**
+(nothing to decide — just confirm the resolution stands); **7 are design acceptances**
+awaiting the reviewer's tick (`[ ]` → change to `[x]`, or write an override). Sign-off
+= confirm the resolved set and tick the seven. Commit refs: batch A `5308559`, F1-redux
+`96cc8df`, C1 `708820c`, research upgrades `8ea022b`, alpha-default/Q5/Q20 `3a362fe`.
 
-1. **[F1] `recorded_decision_drift` σ convention:** accept that the recorded-path floor is ~√2 inflated (documented leniency), or require a fix (disjoint 2N sampling, or √2 correction)? **Decision: accept / fix-disjoint / fix-correct.**
-2. **[F2] Fix the `default_decision_label` docstring** to state it deliberately discards tool-call id/type and non-decision response fields (behavior unchanged)? **YES/NO.**
-3. **[J1]** Is caller-supplied `render(G)` with a documented review gate (no default renderer in core) acceptable until §14.5 is settled with WS3? **YES/NO.**
-4. **[J2]** Is `default_salient`'s verbatim restatement acceptable as the default re-emphasis, given the `salient_artifact` guard must be run per (salient, decider) pair? **YES/NO.**
-5. **[J2]** Is it acceptable that there is no guard for the *understatement* direction (a salient too weak to resurface dropped content)? **YES/NO** (NO ⇒ open an issue for a positive-control check: a known-dropped caption must produce loss > 0).
-6. **[J3]** fusion_loss "uniform" = normalized 1/k (mean, bounded [0,1]) rather than the raw sum — correct reading of §7.4? **YES/NO.**
-7. **[J3]** Single σ computed at F (not per augmented context F + salient(C_i)) — acceptable? **YES/NO.**
-8. **[J4/J5]** Is lossless-by-default binning with documented degeneracy for continuous action spaces the right core default (coarsening lives in the adapter's ActionSchema), per §14.6? **YES/NO.**
-9. **[J6]** 2N-draw split-half with 32-trial seeded averaging as the σ estimator (the two documented deviations from §7.2's literal text) — approved? **YES/NO.**
-10. **[J7]** Is documentation-only enforcement of the REPLAY CAVEAT acceptable, or should point-mass collapse under a temperature>0 decider raise a warning? **YES/NO (NO ⇒ add the warning).**
-11. **[J8]** Is post-record same-endpoint sampling (with its endpoint-stationarity assumption and `include_original=True` mixture) acceptable for the bridge, documented as a limitation? **YES/NO.**
-12. **[J10/E2]** Is n_sigma=∞ on sample-σ=0 acceptable, or should σ be floored at the estimator resolution (~1/N)? **YES/NO (NO ⇒ floor it).**
-13. **[J11]** In decision mode, `gate()`'s `drift_threshold` parameter is ignored (threshold is `decision.k`). Acceptable API, or should passing both raise? **YES/NO.**
-14. **[J9]** Judge tie → NOT equivalent, unparseable → NOT equivalent, difference-signal-wins parsing — approved as the conservative stack? **YES/NO.**
-15. **[J10]** k=3.0 as the DecisionGate default pending empirical calibration on real episodes — approved as a placeholder? **YES/NO.**
-16. **[J10]** The gate thresholds `excess/σ = (div−σ)/σ > k`, i.e. effectively `div > (k+1)·σ` — is subtract-then-divide the intended definition of "k σ-units" (vs `div/σ > k`)? **YES/NO.**
-17. **[J11]** Is probe-decider-on-captions (no fuser, no Cortex re-run) an honest enough decision gate given the in-code scope statement, until a runtime re-drive exists? **YES/NO.**
-18. **[E1/E6]** Add cheap input validation: `n >= 1` in the distribution/σ functions, finite weights in fusion_loss? **YES/NO.**
-19. **[E3]** Should `recorded_decision_drift` error (rather than use σ=0) when no sibling samples exist for the tick? **YES/NO.**
-20. **[E8]** Should a decision-mode episode with zero frontier-seam events be reported distinctly (e.g. a flag) instead of drift 0.0? **YES/NO.**
+| # | Register | Question (short) | Status | Recommended answer | Confirm |
+|---|---|---|---|---|---|
+| Q1 | F1 | recorded-path σ convention | **RESOLVED** | F1-redux: both sides averaged at M//2. Candidate-side size uncorrected = documented residual (matches `decision_stability`). | `[ ]` |
+| Q2 | F2 | `default_decision_label` docstring truthful | **RESOLVED** | YES — docstring states the deliberate lossiness. | `[ ]` |
+| Q3 | J1 | caller-supplied `render(G)` + review gate | design | **YES** — no default renderer in core until §14.5/WS3. | `[ ]` |
+| Q4 | J2 | `default_salient` verbatim restatement | design | **YES** — acceptable default; run `salient_artifact` per (salient, decider) pair. | `[ ]` |
+| Q5 | J2 | understatement guard | **RESOLVED** | Added `salient_sensitivity` (positive control): known-dropped fact must give loss > 0. | `[ ]` |
+| Q6 | J3 | fusion weights = normalized 1/k (mean) | design | **YES** — bounded [0,1], comparable across k; raw sum via explicit `weights`. | `[ ]` |
+| Q7 | J3 | single σ at F (not per augmented ctx) | design | **YES** — acceptable when decider noise is ~context-independent. | `[ ]` |
+| Q8 | J4/J5 | lossless-by-default binning | design | **YES** — coarsening lives in the adapter's ActionSchema (§14.6). | `[ ]` |
+| Q9 | J6 | 2N-draw split-half σ estimator | **RESOLVED** | YES — it's the split-half-reliability construction (Spearman-Brown alternative), literature-validated. | `[ ]` |
+| Q10 | J7 | REPLAY CAVEAT doc-only | design | **YES (keep doc-only)** — a warning would false-fire on legitimate deterministic deciders. | `[ ]` |
+| Q11 | J8 | endpoint-stationarity assumption | **RESOLVED** | Served-model guard: `recorded_decision_drift` raises on a model mismatch. | `[ ]` |
+| Q12 | J10/E2 | σ=0 → n_sigma=∞ hair-trigger | **RESOLVED** | σ floored at 1/N (estimator resolution); genuine flip still fails. | `[ ]` |
+| Q13 | J11 | `drift_threshold` ignored in decision mode | **RESOLVED** | Warns when passed (batch A). | `[ ]` |
+| Q14 | J9 | judge conservative tie/parse stack | **RESOLVED** | YES — ties/unparseable → NOT equivalent; bare-negation parse fixed (batch A). | `[ ]` |
+| Q15 | J10 | k=3.0 threshold | **RESOLVED** | Permutation p-value (`alpha=0.05`) is now the DEFAULT; k opt-in legacy (arXiv 2412.12148). | `[ ]` |
+| Q16 | J10 | "σ-units" = subtract-then-divide | **RESOLVED** | Moot under the default p-value; label corrected (σ was the null mean, not SD). | `[ ]` |
+| Q17 | J11 | probe-on-captions gate honesty | design | **YES** — honest given the in-code scope statement, until a runtime re-drive exists. | `[ ]` |
+| Q18 | E1/E6 | input validation (n≥1, finite weights) | **RESOLVED** | Added (batch A). | `[ ]` |
+| Q19 | E3 | error on unsampled pool vs silent σ=0 | **RESOLVED** | Errors on a <2-label pool. | `[ ]` |
+| Q20 | E8 | flag zero-frontier-event episodes | **RESOLVED** | `EpisodeDrift.scored = False` + log. | `[ ]` |
+
+**The seven design acceptances awaiting a tick:** Q3, Q4, Q6, Q7, Q8, Q10, Q17. None
+changes a number or a guarantee — each is "is this documented choice acceptable." The
+rest are resolved in code and pinned by tests.
 
 ---
 
 ## Sign-off
 
-- Reviewer: ____________  Date: ____________
-- Findings F1/F2 resolution recorded in: ____________ (issue/commit)
-- Blanket approval of unlisted defaults is **not** implied; anything not covered by Q1–Q20 that the reviewer flags goes in below.
+**To sign off:** tick the seven design-acceptance rows (Q3, Q4, Q6, Q7, Q8, Q10, Q17)
+above — or write an override beside any — and confirm the 13 RESOLVED rows stand. Then:
 
-Notes:
+- Reviewer: ____________  Date: ____________
+- Verdict: [ ] all recommendations accepted as pre-filled  ·  [ ] accepted with the overrides noted below
+- Findings F1/F2 + research resolutions recorded in: commits `96cc8df`, `8ea022b`, `3a362fe` (this doc's §"Research-grounded upgrades")
+- Follow-ups to open as issues (not release-blocking): empirical calibration of the p-value `alpha`/`trials` on real episodes once a labeled false-positive set exists; a runtime re-drive to replace the probe decider (Q17).
+- Blanket approval of unlisted defaults is **not** implied; anything the reviewer flags beyond Q1–Q20 goes below.
+
+Overrides / notes:
