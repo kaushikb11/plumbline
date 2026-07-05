@@ -42,6 +42,44 @@ record-mode concept**, and **lead with the command that works**.
 
 ---
 
+## Resolution status (2026-07) — RESOLVED
+
+All of P0–P3 and the P4 doc/example items were implemented (five parallel workstreams
++ an integration pass). **238 tests green, `mypy --strict` + `ruff` clean.** Highlights:
+
+- **P0 (blockers/bugs):** record/replay now raise the friendly `pip install 'plumbline[proxy]'`
+  message instead of a raw `httpx` traceback (guard reached); the quickstart/README
+  counterfactual snippets run on copy-paste (stale episode id fixed); the wrong
+  "# the default" comment corrected; the PyPI claim softened.
+- **P1 (discoverability):** `plumbline/__init__.py` and `core/__init__.py` are now
+  curated (`from plumbline import Seam, SeamEvent, make_seam_event, Recorder, Replayer,
+  TraceStore, RecordingSession, …`); `RecordingSession` exported; docs lead with the
+  one-command green (`plumbline gate bench/om1_gazebo_gate.py`); a zero-dep
+  `examples/toy_loop.py` runs on a bare install; `plumbline list` + `--version` added;
+  episode-not-found humanized; `python -m plumbline` works (`__main__.py`).
+- **P2 (footguns):** `make_seam_event(...)` auto-computes the digest (kills the
+  silent-unreplayable footgun); the digest is validated at record time
+  (`DigestMismatch`); raw `KeyError`s replaced by typed `EpisodeNotOpen` / `EpisodeNotFound`
+  / `ReplayMiss` (backward-compatible subclasses); the `gate` module renamed `gating`
+  to end the name collision.
+- **P3 (extensibility):** the adapter contract is unified into ONE `@runtime_checkable`
+  `Adapter` Protocol (7 methods, reconstruct hooks folded in); `assert_conforms` +
+  `conformance_checks` + `adapters/_template.py`; `docs/writing-an-adapter.md`;
+  CONTRIBUTING's "five methods" corrected. (CLI entry-point loading for third-party
+  adapters is the one P3 item deferred — see below.)
+- **P4 (docs):** `docs/api.md`, `docs/concepts.md`, `docs/faq.md` added; examples fail
+  with one-line actionable messages + an `examples/README.md`.
+
+**Deliberately deferred (need your input, not blind implementation):**
+- **The `pytest-plumbline` plugin + named record-mode concept (P4.20)** — a net-new
+  product surface whose semantics (record-mode names, fixture shape) deserve a design
+  decision. Sketch below.
+- **CLI entry-point loading of third-party adapters (P3.16)** — a `--adapter-class
+  module:Class` escape hatch and an `importlib.metadata` group; small, but it's an API
+  surface worth deciding deliberately.
+
+---
+
 ## Prioritized action plan
 
 ### P0 — Documented-path bugs (break the first 5 minutes; ~1–2 hrs total)
