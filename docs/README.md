@@ -31,7 +31,8 @@ The two specs in [`../spec/`](../spec/) are the source of truth for the design.
 **Observability & review**
 - [observability.md](observability.md) — Grafana panels, OTLP export, trace-diff.
 - [math-review-section7.md](math-review-section7.md) — the fidelity-layer (§7) human-review packet: formula-to-code map, judgment-call register, sign-off questions.
-- [related-work-audit-2026-07.md](related-work-audit-2026-07.md) — pre-release novelty re-check and the atomic-claim positioning.
+- [related-work.md](related-work.md) — the novel claim, the neighbors it differentiates against, and why this is a specialization-and-integration contribution.
+- [related-work-audit-2026-07.md](related-work-audit-2026-07.md) — pre-release novelty re-check (multi-source, adversarially verified).
 
 ## For contributors
 
