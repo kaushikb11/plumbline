@@ -70,13 +70,18 @@ All of P0–P3 and the P4 doc/example items were implemented (five parallel work
 - **P4 (docs):** `docs/api.md`, `docs/concepts.md`, `docs/faq.md` added; examples fail
   with one-line actionable messages + an `examples/README.md`.
 
-**Deliberately deferred (need your input, not blind implementation):**
-- **The `pytest-plumbline` plugin + named record-mode concept (P4.20)** — a net-new
-  product surface whose semantics (record-mode names, fixture shape) deserve a design
-  decision. Sketch below.
-- **CLI entry-point loading of third-party adapters (P3.16)** — a `--adapter-class
-  module:Class` escape hatch and an `importlib.metadata` group; small, but it's an API
-  surface worth deciding deliberately.
+**Now also resolved (both former deferrals, built after design sign-off):**
+- **`pytest-plumbline` + named record modes (P4.20)** — `plumbline/pytest_plugin.py`
+  (auto-loaded via a `pytest11` entry point) ships `recorded_proxy` (a mode-aware
+  record/replay fixture), `plumbline_gate` (the gate as an assertion, marker-driven),
+  and `--plumbline-record={none,once,all}` / `--plumbline-store`. The mode policy is a
+  standalone `plumbline/record_mode.py` (`RecordMode`, `should_record`,
+  `missing_trace_is_error`) — the VCR ergonomic, `none` = "CI, no live calls." See
+  [pytest-plugin.md](pytest-plugin.md).
+- **Third-party adapter loading (P3.16)** — the CLI resolves adapters by built-in name,
+  by the `plumbline.adapters` entry-point group, or by a `module:Class` path, and
+  conformance-checks the result at load. Built-ins are registered under the group too,
+  dogfooding the mechanism.
 
 ---
 

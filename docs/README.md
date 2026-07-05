@@ -10,6 +10,7 @@ The two specs in [`../spec/`](../spec/) are the source of truth for the design.
 - [quickstart.md](quickstart.md) — run it: one green command, then point base URLs at the proxy → record → replay → measure, with runnable snippets.
 - [api.md](api.md) — reference for the frozen `core/` contract plus the public `fidelity` / `proxy` / `regression` / `adapters` surfaces (real signatures).
 - [writing-an-adapter.md](writing-an-adapter.md) — teach Plumbline a new runtime: the 7-method `Adapter` contract, classify-vs-reconstruct seams, and an annotated minimal adapter.
+- [pytest-plugin.md](pytest-plugin.md) — record/replay and the behavior gate as native pytest: the `recorded_proxy` fixture, record modes (`none`/`once`/`all`), `plumbline_gate`, and loading third-party adapters.
 - [faq.md](faq.md) — which extra to install, `ModuleNotFoundError` / `ConnectionRefused` fixes, console script vs `python -m`.
 
 **Scope & guarantees**
