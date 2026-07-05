@@ -38,19 +38,38 @@ def test_recording_failure_does_not_break_the_forward_path() -> None:
 
 
 def test_corrupt_events_line_fails_loudly_with_location() -> None:
+    # INTERIOR corruption (a bad line FOLLOWED by more content) is real corruption, not
+    # a crash artifact, and must still fail loudly with its location. A torn TRAILING
+    # line is now recoverable (crash mid-append) — that path is covered in
+    # tests/test_crash_recovery.py; here we pin the interior case still raises.
     store = TraceStore()
     recorder = Recorder(store, VirtualClock())
     recorder.open_episode("ep", {})
     req = _payload("r")
-    recorder.record(
-        SeamEvent(
-            "ep", 0, Seam.FUSE_TO_DECIDE, 0, 0.0, req, req, None, {}, canonicalize(req).digest, 0.0
+    for seq in range(2):
+        recorder.record(
+            SeamEvent(
+                "ep",
+                seq,
+                Seam.FUSE_TO_DECIDE,
+                seq,
+                0.0,
+                req,
+                req,
+                None,
+                {},
+                canonicalize(req).digest,
+                0.0,
+            )
         )
-    )
     recorder.close_episode("ep")
-    # Corrupt the trace: append a truncated JSON line.
+    # Corrupt the trace: splice a truncated JSON line BETWEEN the two good lines, so it
+    # is interior (followed by a valid line) rather than a torn trailing line.
     events_path = store.root / "episodes" / "ep" / "events.jsonl"
-    events_path.write_text(events_path.read_text() + '{"seq": 1, "seam":\n', encoding="utf-8")
+    good = events_path.read_text().splitlines()
+    events_path.write_text(
+        "\n".join([good[0], '{"seq": 1, "seam":', good[1]]) + "\n", encoding="utf-8"
+    )
     with pytest.raises(ValueError, match="corrupt event at events.jsonl line 2"):
         store.load_episode("ep")
 

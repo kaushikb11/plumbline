@@ -20,8 +20,12 @@ the store can be constructed standalone (the frozen interface declared no
 constructor); it does not change any declared method signature.
 """
 
+import contextlib
 import hashlib
 import json
+import logging
+import os
+import re
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -41,6 +45,13 @@ from plumbline.core.trace import (
     SeamIndexEntry,
     canonical_dumps,
 )
+
+_LOG = logging.getLogger("plumbline.store")
+
+# A hex SHA-256 digest: the ONLY shape a content-addressed reference (blob sha256,
+# config_hash) may take. Anything else in a filesystem join is an untrusted-input
+# path-traversal attempt (a hostile events.jsonl setting "sha256": "../../etc/..").
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class EpisodeNotOpen(KeyError):
@@ -72,6 +83,90 @@ class EpisodeNotFound(FileNotFoundError):
         super().__init__(f"episode {episode_id!r} not found in trace store at {root}")
 
 
+class EpisodeExists(FileExistsError):
+    """`open_episode()` was called for an episode id that already has recorded events.
+
+    A `FileExistsError` subclass so callers that catch the OS error keep working.
+    Opening unconditionally used to `write_text("")` events.jsonl, so restarting a
+    crashed recorder with the SAME episode id WIPED the prior recording to zero.
+    Refusing (rather than silently truncating) is the crash-safe behavior: reach for
+    a fresh episode id or a fresh store root. This is an ADDITIVE guard — no existing
+    method signature changes (no `overwrite=` parameter was added).
+    """
+
+    def __init__(self, episode_id: str, root: Path) -> None:
+        self.episode_id = episode_id
+        self.store_root = root
+        super().__init__(
+            f"episode {episode_id!r} already has recorded events in the trace store at "
+            f"{root}; refusing to truncate it. Use a fresh episode id or a fresh store."
+        )
+
+
+class UnsafeTraceRef(ValueError):
+    """A trace reference (episode id, blob sha256, config hash) would escape the store.
+
+    "Download someone's trace and replay it" is the product's core flow, so episode
+    ids and the sha256/config_hash pulled out of a (possibly hostile) events.jsonl or
+    manifest are untrusted input. Any component containing a path separator, `..`, or
+    an absolute path — and any sha256/config_hash that is not exactly 64 lowercase hex
+    — is rejected BEFORE it reaches a filesystem join, so a read can never resolve to
+    a path outside the store root.
+    """
+
+    def __init__(self, kind: str, value: object) -> None:
+        self.kind = kind
+        self.value = value
+        super().__init__(
+            f"unsafe {kind} {value!r}: refusing to resolve a trace reference that could "
+            "escape the store root"
+        )
+
+
+def _safe_component(value: str, *, kind: str) -> str:
+    """Validate a single untrusted path component (e.g. an episode id).
+
+    Rejects anything that could traverse outside the store root: a non-str, an empty
+    string, `.`/`..`, an embedded `..`, a `/` or `\\` separator, or an absolute path.
+    """
+    if not isinstance(value, str) or value in ("", ".", ".."):
+        raise UnsafeTraceRef(kind, value)
+    if "/" in value or "\\" in value or ".." in value or Path(value).is_absolute():
+        raise UnsafeTraceRef(kind, value)
+    return value
+
+
+def _safe_hex64(value: str, *, kind: str) -> str:
+    """Validate an untrusted content-addressed reference (sha256 / config_hash)."""
+    if not isinstance(value, str) or _SHA256_RE.match(value) is None:
+        raise UnsafeTraceRef(kind, value)
+    return value
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Durably write `data` to `path`: temp file in the same dir, fsync, atomic rename.
+
+    A crash mid-write can then never leave a half-written manifest/config/blob: the
+    reader sees either the old bytes or the fully-written new bytes, never a torn file.
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-", suffix=path.suffix)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    _atomic_write_bytes(path, text.encode("utf-8"))
+
+
 @dataclass
 class _OpenEpisode:
     metadata: Mapping[str, JSONValue]
@@ -95,9 +190,16 @@ class TraceStore:
 
     # --- Episode writes (append-only per episode, §5.1/§5.3) ---
     def open_episode(self, manifest: EpisodeManifest) -> None:
-        ep_dir = self._episode_dir(manifest.episode_id)
+        ep_dir = self._episode_dir(manifest.episode_id)  # validates the episode id
+        events_path = ep_dir / "events.jsonl"
+        # Crash-safety: refuse to silently truncate a recording. Re-opening the SAME
+        # episode id after a crash used to wipe the events to zero. An existing
+        # events.jsonl with content means real recorded data — raise, never overwrite.
+        # A fresh/absent episode (or one opened but never appended to) opens normally.
+        if events_path.exists() and events_path.stat().st_size > 0:
+            raise EpisodeExists(manifest.episode_id, self._root)
         ep_dir.mkdir(parents=True, exist_ok=True)
-        (ep_dir / "events.jsonl").write_text("", encoding="utf-8")  # truncate, append-only
+        events_path.write_text("", encoding="utf-8")  # empty, append-only
         self._open[manifest.episode_id] = _OpenEpisode(
             metadata=manifest.metadata, config_hash=manifest.config_hash
         )
@@ -114,6 +216,8 @@ class TraceStore:
         line = canonical_dumps(_event_to_json(event))
         with (self._episode_dir(episode_id) / "events.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())  # durability: the event survives a crash right after
         open_ep.seam_index.append(
             SeamIndexEntry(
                 seq=event.seq,
@@ -142,8 +246,9 @@ class TraceStore:
             config_hash=open_ep.config_hash,
             seam_index=tuple(open_ep.seam_index),
         )
-        (self._episode_dir(episode_id) / "manifest.json").write_text(
-            canonical_dumps(_manifest_to_json(manifest)), encoding="utf-8"
+        _atomic_write_text(
+            self._episode_dir(episode_id) / "manifest.json",
+            canonical_dumps(_manifest_to_json(manifest)),
         )
 
     # --- Episode reads ---
@@ -152,14 +257,32 @@ class TraceStore:
         events_path = self._episode_dir(episode_id) / "events.jsonl"
         events: list[SeamEvent] = []
         lines = events_path.read_text(encoding="utf-8").splitlines()
+        # A robot killed mid-append leaves a torn/incomplete FINAL line. Recover every
+        # good event and drop only that trailing partial line. But a bad line FOLLOWED
+        # by more lines is real corruption (not a crash) and must still fail loudly.
+        # The distinction is positional: the last non-empty line may be torn; an
+        # interior one may not.
+        last_content_idx = max((i for i, line in enumerate(lines) if line), default=-1)
         for lineno, line in enumerate(lines, start=1):
             if not line:
                 continue
             try:
                 events.append(_event_from_json(_loads(line)))
             except (ValueError, KeyError, TypeError) as exc:
-                # A corrupt/truncated line is a trace-integrity failure, NOT a thing
-                # to silently skip (dropping a recorded event is fabrication-adjacent).
+                if lineno - 1 == last_content_idx:
+                    # Torn/incomplete TRAILING line: a crash mid-write. Recover the good
+                    # events, drop the partial final line. Losing the whole mission trace
+                    # to one interrupted append is the far worse failure.
+                    _LOG.warning(
+                        "episode %r: dropped torn trailing line %d of events.jsonl "
+                        "(crash mid-append); recovered %d event(s)",
+                        episode_id,
+                        lineno,
+                        len(events),
+                    )
+                    break
+                # An INTERIOR corrupt line is a trace-integrity failure, NOT a thing to
+                # silently skip (dropping a recorded event is fabrication-adjacent).
                 # Fail loudly and locate it, rather than emit a raw mid-iteration error.
                 raise ValueError(
                     f"episode {episode_id!r}: corrupt event at events.jsonl line {lineno}: {exc}"
@@ -180,14 +303,16 @@ class TraceStore:
 
     # --- Content-addressed blobs (§5.3) ---
     def put_blob(self, data: bytes, kind: BlobKind, media_type: str | None = None) -> BlobRef:
-        sha256 = hashlib.sha256(data).hexdigest()
+        sha256 = hashlib.sha256(data).hexdigest()  # trusted: locally computed hex
         path = self._root / "blobs" / f"{sha256}.{kind.value}"
         if not path.exists():  # content-addressed: identical bytes stored once
-            path.write_bytes(data)
+            _atomic_write_bytes(path, data)  # durable: crash can't leave a torn blob
         return BlobRef(sha256=sha256, kind=kind, media_type=media_type)
 
     def get_blob(self, ref: BlobRef) -> bytes:
-        return (self._root / "blobs" / f"{ref.sha256}.{ref.kind.value}").read_bytes()
+        # Untrusted read: a hostile events.jsonl can name any sha256 (e.g. "../../etc").
+        sha256 = _safe_hex64(ref.sha256, kind="blob sha256")
+        return (self._root / "blobs" / f"{sha256}.{ref.kind.value}").read_bytes()
 
     # --- Config snapshots (config/<config_hash>.json, §5.3) ---
     def put_config(self, snapshot: ConfigSnapshot) -> str:
@@ -197,13 +322,13 @@ class TraceStore:
         }
         config_hash = hashlib.sha256(canonical_dumps(body).encode("utf-8")).hexdigest()
         full: JSONValue = {"config_hash": config_hash, **_as_dict(body)}
-        (self._root / "config" / f"{config_hash}.json").write_text(
-            canonical_dumps(full), encoding="utf-8"
-        )
+        _atomic_write_text(self._root / "config" / f"{config_hash}.json", canonical_dumps(full))
         return config_hash
 
     def get_config(self, config_hash: str) -> ConfigSnapshot:
-        raw = _loads((self._root / "config" / f"{config_hash}.json").read_text(encoding="utf-8"))
+        # Untrusted read: config_hash may come from a downloaded manifest.
+        safe_hash = _safe_hex64(config_hash, kind="config_hash")
+        raw = _loads((self._root / "config" / f"{safe_hash}.json").read_text(encoding="utf-8"))
         return ConfigSnapshot(
             config_hash=raw["config_hash"],
             runtime_config=raw["runtime_config"],
@@ -211,7 +336,9 @@ class TraceStore:
         )
 
     def _episode_dir(self, episode_id: str) -> Path:
-        return self._root / "episodes" / episode_id
+        # Untrusted on both paths: an episode id can arrive from a downloaded trace
+        # (read) or an external producer (write). Validate before joining the root.
+        return self._root / "episodes" / _safe_component(episode_id, kind="episode_id")
 
 
 # --- JSON (de)serialization helpers; all encoders return JSONValue ----------
@@ -272,7 +399,13 @@ def _manifest_to_json(manifest: EpisodeManifest) -> JSONValue:
 
 
 def _blob_from_json(raw: Any) -> BlobRef:
-    return BlobRef(sha256=raw["sha256"], kind=BlobKind(raw["kind"]), media_type=raw["media_type"])
+    # Parsed from a (possibly hostile) events.jsonl/manifest: reject a traversal sha256
+    # at parse time, so load_episode/load_manifest surface it before any blob read.
+    return BlobRef(
+        sha256=_safe_hex64(raw["sha256"], kind="blob sha256"),
+        kind=BlobKind(raw["kind"]),
+        media_type=raw["media_type"],
+    )
 
 
 def _payload_from_json(raw: Any) -> Payload:
