@@ -275,3 +275,14 @@ def test_set_embedder_single_threaded_pin_then_use_unchanged() -> None:
 
     with _restore_module_default():
         contextvars.copy_context().run(body)
+
+
+def test_per_instance_embedder_wins_over_ambient() -> None:
+    # The signed-off additive field: a matcher carrying its own embedder ignores the
+    # ambient (using_embedder / set_embedder) pin — explicit and recordable per matcher.
+    a = Payload(inline={"caption": "hello world"})
+    b = Payload(inline={"caption": "goodbye moon"})
+    with using_embedder(_per_text_embedder):  # ambient distinguishes the two texts
+        assert EmbeddingMatcher(0.2).matches(a, b).is_match is False  # uses ambient
+        # own embedder (_const_embedder -> identical vectors) overrides the ambient one
+        assert EmbeddingMatcher(0.2, embedder=_const_embedder).matches(a, b).is_match is True

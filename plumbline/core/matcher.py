@@ -78,16 +78,20 @@ class EmbeddingMatcher:
     """Cosine distance over embeddings of free text (captions, prompts); match if
     distance < threshold (§3.7).
 
-    NOTE: §3.7 says the embedding model is itself pinned and recorded so the
-    matcher is reproducible, but the spec signature exposes only `threshold`; the
-    pinned model is the module-level `_embed` hook (flagged in the module
-    docstring), not a constructor argument.
+    The embedder can be pinned explicitly per matcher via the optional `embedder`
+    field (recommended — the pinned model is then carried on the matcher and is
+    reproducible/recordable, per §3.7). If unset, it falls back to the ambient
+    context embedder (`using_embedder` / `set_embedder`) and finally the process
+    default. Constructor injection is the additive field agreed as the deliberate
+    core-interface change (docs/stability.md); the ambient hook remains for
+    back-compat and for pinning across a whole run.
     """
 
     threshold: float
+    embedder: "Embedder | None" = None
 
     def matches(self, live: Payload, recorded: Payload) -> MatchVerdict:
-        embed = _current_embedder()
+        embed = self.embedder if self.embedder is not None else _current_embedder()
         live_vec = embed(_extract_text(live))
         recorded_vec = embed(_extract_text(recorded))
         distance = _cosine_distance(live_vec, recorded_vec)

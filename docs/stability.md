@@ -25,6 +25,16 @@ blobs + manifests, JSON + safetensors, never pickle) is part of this contract: a
 recorded by one 0.x release replays under the next. A format change that would break an
 existing golden is a called-out breaking change, not a silent one.
 
+### Deliberate core changes (the invariant-1 log)
+
+Frozen-core changes are rare, human-approved, and additive-when-possible. So far:
+
+- **`EmbeddingMatcher.embedder`** (optional field, added deliberately) — lets a matcher
+  carry its pinned embedder explicitly (reproducible/recordable per §3.7) instead of
+  relying only on the ambient `using_embedder` / `set_embedder` hook. Backward-compatible:
+  it defaults to `None` and falls back to the ambient context embedder, so existing
+  `EmbeddingMatcher(threshold)` callers are unaffected.
+
 ## What is experimental (may change without the stable-surface guarantee)
 
 - **The fidelity math** (`plumbline.fidelity`) — `caption_loss` / fusion loss, the
