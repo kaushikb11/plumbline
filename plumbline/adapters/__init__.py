@@ -10,6 +10,7 @@ from plumbline.adapters.base import (
     ClockHook,
     ProxyConfig,
 )
+from plumbline.adapters.conformance import ConformanceError, assert_conforms, conformance_checks
 from plumbline.adapters.g1 import G1ActionSchema, G1Adapter
 from plumbline.adapters.generic import GenericActionSchema, GenericAgentAdapter
 from plumbline.adapters.om1 import OM1ActionSchema, OM1Adapter
@@ -22,6 +23,9 @@ __all__ = [
     "BusSample",
     "BusTap",
     "ClockHook",
+    "ConformanceError",
+    "assert_conforms",
+    "conformance_checks",
     "G1ActionSchema",
     "G1Adapter",
     "GenericActionSchema",
