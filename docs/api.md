@@ -174,6 +174,7 @@ class TraceStore:
     def append_event(self, episode_id: str, event: SeamEvent) -> None
     def close_episode(self, episode_id: str) -> None
     def load_episode(self, episode_id: str) -> Episode
+    def iter_events(self, episode_id: str) -> Iterator[SeamEvent]    # stream events in on-disk order, one in memory at a time
     def load_manifest(self, episode_id: str) -> EpisodeManifest
     def list_episodes(self) -> tuple[str, ...]
     def put_blob(self, data: bytes, kind: BlobKind, media_type: str | None = None) -> BlobRef
@@ -204,13 +205,14 @@ class ExactMatcher:                                    # canonical byte/structur
 @dataclass(frozen=True)
 class EmbeddingMatcher:                                # cosine distance over free text; match if distance < threshold
     threshold: float
+    embedder: Embedder | None = None                  # per-instance override; None → the active module embedder
 @dataclass(frozen=True)
 class NumericToleranceMatcher:                         # tolerance compare for pose/coordinate payloads
     rtol: float
     atol: float
 ```
 
-`EmbeddingMatcher` routes text through a module-level pinned embedder (a dependency-free bag-of-tokens default). Swap in a real semantic model with `set_embedder(embedder)` where `Embedder = Callable[[str], Mapping[str, float]]`.
+`EmbeddingMatcher` routes text through an embedder, `Embedder = Callable[[str], Mapping[str, float]]` — a dependency-free bag-of-tokens default. Choose one three ways, narrowest scope winning: pass `embedder=` to one matcher instance; scope a block with `with using_embedder(embedder): ...`; or pin the process-wide default with `set_embedder(embedder)`. `active_embedder_name()` reports which is currently in effect (useful to stamp on a trace so replay uses the same one).
 
 ### `VirtualClock` (`core/clock.py`)
 
@@ -221,6 +223,19 @@ class VirtualClock:
     def advance(self) -> int
     def bind_replay(self, episode: Episode) -> None    # serve recorded ticks during replay
 ```
+
+### Typed errors
+
+The store and trace layers raise named exceptions (each subclasses a builtin, so `except FileNotFoundError` etc. still works):
+
+| Exception | Module | Subclass of | Raised when |
+|---|---|---|---|
+| `EpisodeExists` | `core.store` | `FileExistsError` | opening an episode id that already exists |
+| `EpisodeNotFound` | `core.store` | `FileNotFoundError` | loading an episode that isn't on disk |
+| `EpisodeNotOpen` | `core.store` | `KeyError` | appending to an episode that wasn't opened |
+| `UnsafeTraceRef` | `core.store` | `ValueError` | a blob/episode ref that would escape the store root |
+| `DigestMismatch` | `core.trace` | `ValueError` | a loaded event's `request_digest` doesn't match its canonical request |
+| `ReplayMiss` | `proxy` | `KeyError` | replay requests a digest not in the trace, or over-consumes a recorded one |
 
 ---
 
@@ -252,7 +267,9 @@ class ReplayingProxy:
     def faithful(self, request: Payload, ctx: Context) -> Payload  # serves the recorded response by digest
 ```
 
-Also public: `AsyncHTTPProxy` + its transport types (`AsyncTransport`, `HTTPRequest`, `HTTPResponse`); the provider normalizers `OpenAIChatNormalizer`, `GeminiNormalizer`, `AnthropicMessagesNormalizer` (and `DEFAULT_NORMALIZERS`, `contains_image`, `extract_data_urls`); OTel-GenAI span mapping `to_span` / `seam_event_attributes`; SSE streaming helpers (`split_sse`, `assemble_openai`, …); `classify_seam`, `default_digest`, and `ProxyDivergence(seam, distance, request_digest, detail=None)`.
+Also public: `AsyncHTTPProxy` + its transport types (`AsyncTransport`, `AsyncStreamingTransport` — the streaming variant adds a `stream(request) -> (status, headers, AsyncIterator[bytes])` method alongside `send`, for SSE upstreams — `HTTPRequest`, `HTTPResponse`); the provider normalizers `OpenAIChatNormalizer`, `GeminiNormalizer`, `AnthropicMessagesNormalizer` (and `DEFAULT_NORMALIZERS`, `contains_image`, `extract_data_urls`); OTel-GenAI span mapping `to_span` / `seam_event_attributes`; SSE streaming helpers (`split_sse`, `assemble_openai`, …); `classify_seam`, `default_digest`, and `ProxyDivergence(seam, distance, request_digest, detail=None)`.
+
+Redaction (keep secrets out of a trace at record time): `redact_json_keys(payload, keys) -> Payload` returns a copy with the named keys blanked to `"[REDACTED]"` at any depth (blobs pass through untouched); `redactor_for(keys)` bakes a key set into a reusable `Redactor` you pass to `RecordingProxy(redactor=...)` / `AsyncHTTPProxy(redactor=...)`.
 
 Note `AsyncHTTPProxy` takes an **injected** transport — a concrete TLS-terminating reverse server is not shipped; TLS termination is left to a front proxy.
 

@@ -2,16 +2,16 @@
 
 Rank candidate VLM captioners by **downstream decision success**, not caption
 surface quality — the result that "the best caption by NLP metrics is not the best
-caption for behavior" (engineering spec §4, §7.6). This runs on a laptop with real
+caption for behavior." This runs on a laptop with real
 models and **no robot and no simulator**: ground truth comes from labeled images,
 and the models are reached through an OpenAI-compatible endpoint (a local Ollama —
 free, no keys — or a hosted provider).
 
 ## What it produces
 
-A ranked leaderboard where each captioner's score is its mean `caption_loss`
-(§7.3) — how far a decider *acting on that captioner's caption* diverges from
-acting on ground truth, corrected for the decider's own sampling noise:
+A ranked leaderboard where each captioner's score is its mean `caption_loss` —
+how far a decider *acting on that captioner's caption* diverges from acting on
+ground truth, corrected for the decider's own sampling noise:
 
 ```
 1. terse-accurate:  decision_fidelity=0.94 (mean caption_loss=0.06)
@@ -67,7 +67,7 @@ pathlib.Path("scenes.json").write_text(json.dumps(scenes))
 **Start with ~10–20 hand-labeled images** (obstacle vs. clear scenes map cleanly to
 the stop/move decision). Scale later to a benchmark: HomeSafeBench (safety-hazard
 labels) or PhysBench (physical-scene labels) on Hugging Face — deriving `render_g`
-from their labels is the §14.5 work (see the honesty note below).
+from their labels is the work covered in the honesty note below.
 
 ## Step 2 — run it
 
@@ -107,7 +107,7 @@ python run_leaderboard.py
   fact — the LiDAR-dog failure, as a number).
 - The floor is handled for you: `caption_loss` subtracts the decider's
   decision-stability `sigma`, so a gap only counts if it exceeds the decider's own
-  self-disagreement (§7.2). Loss is never negative.
+  self-disagreement. Loss is never negative.
 
 ## Cost and performance
 
@@ -121,7 +121,7 @@ captioners, twenty scenes that is ~2,000 model calls — free but slow on Ollama
   sampling. Precomputing them once per scene is a worthwhile optimization before a
   large run (ask, and it is a small change to `run_captioner_leaderboard`).
 
-## §14.5 — keep `render_g` honest
+## Keep `render_g` honest
 
 `render_g` is the one place this experiment can flatter itself. It must be a
 **caption-agnostic, structured description of ground truth** — an object/obstacle

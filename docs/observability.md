@@ -1,4 +1,4 @@
-# Observability & Grafana (WS4, spec §11)
+# Observability & Grafana
 
 Plumbline exports recorded episodes and analysis results into JSON artifacts that
 Grafana renders. There is **no new Python dependency** — the exporter is pure
@@ -61,8 +61,8 @@ does not.
   stdlib `json.dumps` of a known shape. Keeping the substrate light is a project
   rule.
 - **Latency panels reflect the recorded `latency_ms`, not scheduler wall-clock.**
-  Plumbline's determinism envelope is model-I/O only (invariant 4, §3.4/§14.4); no
-  panel implies scheduler timing.
+  Plumbline's determinism envelope is model-I/O only; no panel implies scheduler
+  timing.
 - **Token panels appear only when the recording carried a `usage` block.** The feed
   omits token fields otherwise rather than reporting zero.
 - **Spans carry the request *digest*, never the raw request/response payload.**

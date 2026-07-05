@@ -1,8 +1,8 @@
 # Recording a real OM1 + Gazebo episode
 
 How to capture a faithful OM1 episode (Unitree Go2 in Gazebo) with Plumbline, so the
-OM1 adapter can be validated against a real run rather than synthetic fixtures (WS5
-definition-of-done). Prerequisites are an environment Plumbline can't provide itself:
+OM1 adapter can be validated against a real run rather than synthetic fixtures.
+Prerequisites are an environment Plumbline can't provide itself:
 Ubuntu + ROS2 + Gazebo + the OM1 Go binary. Interface facts referenced here are
 established in [om1-integration.md](om1-integration.md).
 

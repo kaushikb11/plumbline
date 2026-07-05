@@ -1,4 +1,4 @@
-# OM1 integration — verified interface notes (WS5)
+# OM1 integration — verified interface notes
 
 Ground truth for the OM1 adapter, established by reading OM1's actual source and docs
 (the reference runtime, [github.com/OpenMind/OM1](https://github.com/OpenMind/OM1),
@@ -6,7 +6,7 @@ Ground truth for the OM1 adapter, established by reading OM1's actual source and
 below cites its source. Items still genuinely open (needing a real recorded episode)
 are called out explicitly — those keep an `UNVERIFIED` flag in code.
 
-## Architecture (confirmed)
+## Architecture
 
 OM1 migrated to a **Go** single-binary runtime (the `python` branch is deprecated).
 Internal packages map cleanly onto Plumbline's four seams:
@@ -22,7 +22,7 @@ Source: `internal/` and `plugins/actions/` directory listings (GitHub contents A
 OM1 also ships its own `grafana/` + `prometheus.yml` + `internal/providers/tracer.go`
 — i.e. the exact latency/tracer baselines Experiment B contrasts against.
 
-## Model endpoints & config (confirmed)
+## Model endpoints & config
 
 - Config is **JSON5** in `config/` (e.g. `config/unitree_go2_autonomy.json5`). Values
   support `${ENV_VAR:-default}` substitution.
@@ -39,12 +39,12 @@ OM1 also ships its own `grafana/` + `prometheus.yml` + `internal/providers/trace
 
 Source: `config/unitree_go2_autonomy.json5`, docs "Configuration".
 
-**Zero-touch redirect (corrected):** point OM1 at the recording proxy by setting
+**Zero-touch redirect:** point OM1 at the recording proxy by setting
 `cortex_llm.config.base_url` (and any OpenAI-compatible input's `config.base_url`) to
 the proxy in the JSON5 — the adapter surfaces these as `ProxyConfig.config_fields`.
 Pure env-var redirection is not OM1's mechanism.
 
-## Actions (confirmed)
+## Actions
 
 The LLM emits **function/tool calls** (OM1 has an `internal/llm` `ToolCall` type). Each
 `agent_actions` entry maps an `llm_label` to a `connector`:
@@ -81,7 +81,7 @@ So two authoritative interception points, both real:
 The adapter parses the tool-call decision (`OM1ActionSchema`) and reconstructs
 `DECIDE_TO_ACT` from it (semantic, comparable), mirroring the generic adapter.
 
-## Gazebo run (confirmed)
+## Gazebo run
 
 ```bash
 # 1. sim

@@ -1,6 +1,6 @@
 # The determinism envelope
 
-This is the most important honesty boundary in the project (CLAUDE.md invariant 4; engineering spec §3.4 and §14.4). It is stated precisely so that no code comment, log line, docstring, or README sentence drifts into claiming more than the mechanism delivers.
+This is the most important honesty boundary in the project. It is stated precisely so that no code comment, log line, docstring, or README sentence drifts into claiming more than the mechanism delivers.
 
 ## What Plumbline guarantees
 

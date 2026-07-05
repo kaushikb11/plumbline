@@ -16,6 +16,8 @@ Plumbline fixes all three by recording and replaying the model calls at the four
 
 > *A plumbline is a fixed reference you hang a structure against to detect drift, and the instrument you drop to sound the depth of something you can't see into. Both meanings are load-bearing here.*
 
+<p align="center"><img src="docs/architecture.svg" alt="Plumbline data flow: capture the four language seams to a trace, then faithful and counterfactual replay feed reproduce/diff, the regression gate, and the fidelity metrics." width="840"></p>
+
 ## Quickstart
 
 ```bash

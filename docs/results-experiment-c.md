@@ -1,5 +1,10 @@
 # Experiment C — a real-model result (no robot, no simulator)
 
+**A narrower camera view that crops out the floor scores `decision_fidelity`
+0.752 vs 0.814 — and on exactly the two scenes with an obstacle, its
+`caption_loss` runs 2–3× higher, because dropping the obstacle from the caption
+flips the robot's decision from *stop* to *move*.**
+
 This is Plumbline's fidelity metric run end-to-end on **real models** — a real
 vision model captioning real images, a real LLM deciding, sampled N times, scored
 by `caption_loss` with the decision-stability noise floor. It runs on a laptop
@@ -68,7 +73,7 @@ benchmark, and it is reported raw:
   photographs, and the models are small (chosen to fit a laptop). Real photos and
   larger models sharpen the number; the *mechanism* is what is demonstrated here.
 - **`render(G)` is the dataset label.** Kept caption-agnostic and identical across
-  captioners (§14.5), so the metric cannot flatter itself.
+  captioners, so the metric cannot flatter itself.
 
 For a noise-free illustration of the same thesis through the full network stack
 (real HTTP, real N-sampling) with a scripted model stand-in, see the

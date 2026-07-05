@@ -1,6 +1,9 @@
-# The showcase episode — real OM1, real physics, real perception (§9, §15)
+# The showcase episode — real OM1, real physics, real perception
 
-Episode **`om1-gazebo-maze-003`**: the unmodified OM1 Go runtime driving a
+**8.374 m walked, 153 Cortex decisions tracking 15 lidar-derived perception
+states, byte-identical replay over 4,095 events — verified on two machines.**
+
+Episode **`om1-gazebo-maze-003`** is the unmodified OM1 Go runtime driving a
 physics-simulated Unitree Go2 through a maze, with **every byte of perception and
 action genuine** — simulated lidar → `om_path` → the fused prompt's "safe movement
 directions" → a live cloud Cortex → `Move` tool calls → champ gait control →

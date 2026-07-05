@@ -1,10 +1,13 @@
-# Experiment B on a real OM1 episode — the silent-regression demo (§4, §8)
-
-The flagship claim, executed end-to-end on **real components** — the real OM1 Go
-binary's recorded episode, a real cloud LLM, a real (one-rule) governance edit:
+# Experiment B on a real OM1 episode — the silent-regression demo
 
 > **Existing observability says fine. Plumbline says broken. The robot was in
 > fact broken — it drove backwards on every tick.**
+
+The flagship claim, executed end-to-end on **real components** — the real OM1 Go
+binary's recorded episode, a real cloud LLM, a real (one-rule) governance edit.
+Every decision flipped from *move forwards* to *move back*; OM1's latency stack
+and a generic text tracer stayed green, and Plumbline caught it at the
+`DECIDE_TO_ACT` seam.
 
 Reproduce with [`examples/experiment_b_om1.py`](../examples/experiment_b_om1.py)
 against an episode recorded by
@@ -23,7 +26,7 @@ against an episode recorded by
   back' or 'stand still', never 'move forwards'."*
 - **The counterfactual**: the `FUSE_TO_DECIDE` seam re-executes against the
   live Cortex model with the edited prompt; everything upstream stays pinned to
-  the trace (§6).
+  the trace.
 
 ## The result
 
@@ -56,7 +59,7 @@ edit — and:
   *episode* is software-in-the-loop: no sim, no physics, perception stubbed.
   The decision seam — where this regression lives — is fully real.
 - Pure-trace counterfactual replay cannot re-run the physical `cmd_vel`
-  controller (§6.5): the candidate's *semantic* actions are re-derived from its
+  controller: the candidate's *semantic* actions are re-derived from its
   changed decisions (exactly what the recorder does), while raw bus frames stay
   pinned to the trace. A Gazebo episode closes that last gap.
 - The per-step drift number (0.02 over all 1,863 aligned steps) dilutes the
@@ -67,7 +70,7 @@ edit — and:
 
 ## σ-anchored, from the recorded seams (the fidelity bridge)
 
-The recorded episode's own decision distributions (fidelity bridge, §7: 8 extra
+The recorded episode's own decision distributions (the fidelity bridge: 8 extra
 samples per tick from the same endpoint into the sibling `*.samples` episode —
 360 recorded samples) put a measured noise floor under the drift:
 
