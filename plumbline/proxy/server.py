@@ -17,7 +17,9 @@ The rest of `plumbline.proxy` does not import httpx, so the core stays light.
 """
 
 import importlib
-from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
+import logging
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any
 
 import httpx
@@ -28,12 +30,19 @@ from plumbline.core.recorder import Recorder
 from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
 from plumbline.core.trace import JSONValue
-from plumbline.proxy.http import AsyncHTTPProxy, HTTPRequest, HTTPResponse
+from plumbline.proxy.http import (
+    AsyncHTTPProxy,
+    AsyncStreamingTransport,
+    HTTPRequest,
+    HTTPResponse,
+)
 from plumbline.proxy.streaming import CapturedStream, split_sse
 from plumbline.proxy.tick import _TICK_OVERRIDE_KEY
 from plumbline.proxy.ws import AsyncWSProxy, WsConnection, WsFrame, _NoUpstreamWsTransport
 
+_log = logging.getLogger("plumbline.proxy")
 _JSON_CONTENT_TYPE = "application/json"
+_SSE_CONTENT_TYPE = "text/event-stream"
 
 ASGIScope = MutableMapping[str, Any]
 ASGIMessage = MutableMapping[str, Any]
@@ -85,6 +94,46 @@ class HttpxTransport:
         finally:
             await response.aclose()
 
+    async def stream(
+        self, request: HTTPRequest
+    ) -> tuple[int, Mapping[str, str], AsyncIterator[bytes]]:
+        """Open the upstream response and forward its body chunk-by-chunk (satisfies
+        `AsyncStreamingTransport`). Returns the status, the same filtered response
+        headers as `send`, and an async iterator over the raw body chunks that closes
+        the httpx stream when exhausted — so the ASGI record path can relay SSE to the
+        runtime as bytes arrive rather than buffering the whole completion first."""
+        headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key.lower() not in _DROP_REQUEST_HEADERS
+        }
+        upstream = self._client.build_request(
+            request.method, request.url, headers=headers, content=request.body
+        )
+        response = await self._client.send(upstream, stream=True)
+        forwarded = {
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() not in _DROP_RESPONSE_HEADERS
+        }
+
+        async def chunks() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in response.aiter_raw():
+                    yield chunk
+            finally:
+                await response.aclose()
+
+        return response.status_code, forwarded, chunks()
+
+
+def _content_type(headers: Mapping[str, str]) -> str:
+    """Case-insensitive content-type lookup over a forwarded header mapping."""
+    for key, value in headers.items():
+        if key.lower() == "content-type":
+            return value
+    return ""
+
 
 def make_asgi_app(proxy: AsyncHTTPProxy, *, upstream: str, episode_id: str) -> ASGIApp:
     """Expose `proxy` (record mode) as an ASGI app. Point the runtime's base URL at
@@ -125,9 +174,90 @@ def make_asgi_app(proxy: AsyncHTTPProxy, *, upstream: str, episode_id: str) -> A
             params=params,
             logical_tick=override if override is not None else 0,
         )
-        await _send_response(send, await proxy.record(request, ctx))
+        transport = proxy._transport  # noqa: SLF001 - the ASGI layer picks the wire strategy
+        if isinstance(transport, AsyncStreamingTransport):
+            # Streaming forward: relay the upstream body to the runtime chunk-by-chunk
+            # (preserving time-to-first-token for a streamed SSE decision), then record
+            # the assembled response AFTER the client is fully served.
+            await _record_streaming(proxy, transport, request, ctx, send)
+        else:
+            # A transport without `stream()` keeps the original buffered path: forward,
+            # capture, then emit the whole response. Unchanged behavior.
+            await _send_response(send, await proxy.record(request, ctx))
 
     return app
+
+
+async def _record_streaming(
+    proxy: AsyncHTTPProxy,
+    transport: AsyncStreamingTransport,
+    request: HTTPRequest,
+    ctx: Context,
+    send: ASGISend,
+) -> None:
+    """Forward an upstream response to the client as bytes arrive, then record it.
+
+    For an SSE completion each upstream chunk is relayed to the runtime the moment it
+    arrives (time-to-first-token preserved) and buffered; once the stream is exhausted
+    the assembled body is captured with the SAME `split_sse` framing the buffered path
+    records, so the recording is byte-identical. A non-SSE body is buffered and sent as
+    one message (byte-identity is trivial). Recording runs only AFTER the client is
+    fully served, so zero-touch is strengthened: a `send` failure (client disconnect)
+    or a recording fault is logged and swallowed, never propagated to the runtime."""
+    started = time.perf_counter()
+    try:
+        status, headers, chunks = await transport.stream(request)
+    except Exception:  # noqa: BLE001 - a forward failure must not crash the ASGI server
+        _log.exception("plumbline: upstream stream failed for %s", request.url)
+        return
+
+    is_sse = _SSE_CONTENT_TYPE in _content_type(headers)
+    buffer: list[bytes] = []
+    try:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (key.encode("latin-1"), value.encode("latin-1"))
+                    for key, value in headers.items()
+                ],
+            }
+        )
+        if is_sse:
+            # Stream each chunk to the client as it arrives (more_body=True), buffering
+            # a copy; a terminal empty body closes the response after the last chunk.
+            async for chunk in chunks:
+                buffer.append(chunk)
+                await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+        else:
+            # Non-SSE: buffer the whole body and emit it as one message (byte-identity
+            # is trivial; there is no token stream to preserve).
+            async for chunk in chunks:
+                buffer.append(chunk)
+            await send({"type": "http.response.body", "body": b"".join(buffer)})
+    except Exception:  # noqa: BLE001 - a client disconnect must not crash the server
+        _log.exception("plumbline: client send failed while streaming %s", request.url)
+        return
+
+    latency_ms = (time.perf_counter() - started) * 1000.0
+    raw = b"".join(buffer)
+    if is_sse:
+        # Record with split_sse framing over the assembled bytes — identical to the
+        # buffered HttpxTransport.send path, so the recording is byte-identical
+        # regardless of how the bytes were chunked on the wire.
+        stream = CapturedStream(split_sse(raw.decode("utf-8", errors="replace")))
+        response = HTTPResponse(status, headers, raw, stream)
+    else:
+        response = HTTPResponse(status, headers, raw, None)
+    # record_prefetched is itself zero-touch-guarded, but the client is already served
+    # regardless; this outer guard is belt-and-suspenders so that even a caller that
+    # supplies a proxy whose record_prefetched raises can never break the served stream.
+    try:
+        await proxy.record_prefetched(request, ctx, response, latency_ms)
+    except Exception:  # noqa: BLE001 - recording must never break the served stream
+        _log.exception("plumbline: recording failed for %s (stream already served)", request.url)
 
 
 class _NoUpstreamTransport:

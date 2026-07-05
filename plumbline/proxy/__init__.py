@@ -8,6 +8,7 @@ helpers.
 
 from plumbline.proxy.http import (
     AsyncHTTPProxy,
+    AsyncStreamingTransport,
     AsyncTransport,
     HTTPRequest,
     HTTPResponse,
@@ -58,6 +59,7 @@ __all__ = [
     "WsFrame",
     "WsTransport",
     "AsyncHTTPProxy",
+    "AsyncStreamingTransport",
     "AsyncTransport",
     "CapturedStream",
     "DigestFn",

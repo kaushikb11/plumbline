@@ -90,12 +90,13 @@ before assuming a headline capability.
   There is **no runtime version guard**: a different OM1 build whose wire shape has drifted
   may be mis-recorded (wrong seam reconstruction) rather than rejected. Pin your OM1 commit
   and re-verify the adapter facts against a fresh recording when you upgrade OM1.
-- **SSE streaming is fully buffered by the proxy server** (`proxy/server.py`). A streamed
-  chat completion is captured to completion and then re-emitted, so faithful record/replay
-  is exact but **time-to-first-token is not preserved** — a robot consuming a token stream
-  sees the whole response arrive at once. This is a known v1 limitation; incremental
-  pass-through is a candidate enhancement, not a silent gap. It does not affect the
-  recorded model I/O or any decision.
+- **SSE streaming is passed through incrementally** (`proxy/server.py`). The record proxy
+  forwards each SSE chunk to the runtime the moment it arrives — **time-to-first-token is
+  preserved** for a robot consuming a streamed decision — and records the assembled stream
+  byte-identically *after* the client is fully served (so recording is fully off the hot
+  path, strengthening zero-touch). This requires a streaming-capable transport
+  (`AsyncStreamingTransport`, which `HttpxTransport` implements); a transport without a
+  `stream()` capability falls back to buffering. Recording and replay are unaffected.
 - **"Byte-identical" replay means canonical-payload identity, not raw provider wire
   bytes.** What `tests/test_determinism.py` (invariant 2) asserts is that the normalized
   JSON `Payload` a runtime parses and acts on round-trips bit-for-bit; a provider's

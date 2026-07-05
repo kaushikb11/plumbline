@@ -16,9 +16,9 @@ reconstruct the recorded HTTP response, preserving SSE chunk framing.
 import json
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from plumbline.core.interceptor import Context
 from plumbline.core.matcher import ExactMatcher, Matcher
@@ -68,6 +68,25 @@ class AsyncTransport(Protocol):
     async def send(self, request: HTTPRequest) -> HTTPResponse: ...
 
 
+@runtime_checkable
+class AsyncStreamingTransport(AsyncTransport, Protocol):
+    """An `AsyncTransport` that can additionally forward the upstream response body
+    chunk-by-chunk instead of buffering it whole. It lets the ASGI record path relay
+    an SSE completion to the runtime as bytes arrive (preserving time-to-first-token
+    for a robot consuming a streamed decision) while still assembling the full stream
+    for a byte-identical recording. `stream` returns (status, forwarded response
+    headers, an async iterator of raw body chunks); the iterator owns closing the
+    underlying network stream when exhausted.
+
+    `@runtime_checkable` so the server can detect the capability structurally
+    (`isinstance(transport, AsyncStreamingTransport)`); a transport WITHOUT `stream`
+    falls back to the buffered `send` path unchanged (zero behavior change)."""
+
+    async def stream(
+        self, request: HTTPRequest
+    ) -> tuple[int, Mapping[str, str], AsyncIterator[bytes]]: ...
+
+
 class AsyncHTTPProxy:
     def __init__(
         self,
@@ -101,14 +120,24 @@ class AsyncHTTPProxy:
         started = time.perf_counter()
         response = await self._transport.send(request)  # zero-touch forward
         latency_ms = (time.perf_counter() - started) * 1000.0
+        await self.record_prefetched(request, ctx, response, latency_ms)
+        return response  # the runtime receives the upstream response unaltered
 
-        # ZERO-TOUCH (CLAUDE.md invariant 4): the runtime must receive the upstream
-        # response it earned even if RECORDING fails (disk full, blob write error, a
-        # read-only episode open, a malformed body). EVERY recording step —
-        # opening the episode, normalizing, and _capture — lives inside this guard so
-        # a fault is logged and dropped, never allowed to turn a good 200 into a 500
-        # for the runtime. _ensure_open is here (not before the forward) so a failed
-        # episode-open does not throw away an already-earned upstream response.
+    async def record_prefetched(
+        self, request: HTTPRequest, ctx: Context, response: HTTPResponse, latency_ms: float
+    ) -> None:
+        """Record an ALREADY-fetched response (the forward + latency timing done by the
+        caller). Used by the streaming ASGI path, which forwards the upstream to the
+        client itself (chunk-by-chunk) and then hands the assembled response here to be
+        captured — the client is already fully served, so recording is pure side effect.
+
+        ZERO-TOUCH (CLAUDE.md invariant 4): the runtime must receive the upstream
+        response it earned even if RECORDING fails (disk full, blob write error, a
+        read-only episode open, a malformed body). EVERY recording step — opening the
+        episode, normalizing, and _capture — lives inside this guard so a fault is
+        logged and dropped, never allowed to turn a good 200 into a 500 for the
+        runtime. _ensure_open is here (not before the forward) so a failed episode-open
+        does not throw away an already-earned upstream response."""
         try:
             self._ensure_open(ctx.episode_id)
             normalizer = self._select(request.url)
@@ -116,7 +145,6 @@ class AsyncHTTPProxy:
             self._capture(request, response, normalizer, normalized_request, ctx, latency_ms)
         except Exception:  # noqa: BLE001 - recording must never break the forward path
             _log.exception("plumbline: recording failed for %s (response forwarded)", request.url)
-        return response  # the runtime receives the upstream response unaltered
 
     def _capture(
         self,

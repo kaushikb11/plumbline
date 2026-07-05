@@ -34,8 +34,9 @@ real OM1 team survive depending on this in a live robot + CI" — not a DX revie
 > an ERROR span status for ≥400. Major 13 — sdist excludes `.claude/`/`CLAUDE.md`; the
 > real gate is documented as repo-only, the packaged demo gate ships in the wheel. Minors
 > — gate-`exec` trust boundary in CLI help + FAQ, OM1 beta-pin and SSE-buffering and
-> canonical-payload-bytes all documented. SSE incremental pass-through and the final
-> package identity (name/PyPI) are the remaining deliberate deferrals.
+> canonical-payload-bytes all documented. SSE incremental pass-through is now IMPLEMENTED (AsyncStreamingTransport +
+> the streaming ASGI record path; time-to-first-token preserved, recording byte-identical).
+> The final package identity (name/PyPI) is the remaining deliberate deferral.
 
 ## Verdict: NOT YET production-ready for the deployed/live use case — but the gap is narrow, well-defined, and fixable
 ## (original assessment below; blockers + security majors since resolved — see banner)
