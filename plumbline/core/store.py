@@ -27,7 +27,7 @@ import logging
 import os
 import re
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -255,40 +255,33 @@ class TraceStore:
     def load_episode(self, episode_id: str) -> Episode:
         manifest = self.load_manifest(episode_id)
         events_path = self._episode_dir(episode_id) / "events.jsonl"
-        events: list[SeamEvent] = []
-        lines = events_path.read_text(encoding="utf-8").splitlines()
-        # A robot killed mid-append leaves a torn/incomplete FINAL line. Recover every
-        # good event and drop only that trailing partial line. But a bad line FOLLOWED
-        # by more lines is real corruption (not a crash) and must still fail loudly.
-        # The distinction is positional: the last non-empty line may be torn; an
-        # interior one may not.
-        last_content_idx = max((i for i, line in enumerate(lines) if line), default=-1)
-        for lineno, line in enumerate(lines, start=1):
-            if not line:
-                continue
-            try:
-                events.append(_event_from_json(_loads(line)))
-            except (ValueError, KeyError, TypeError) as exc:
-                if lineno - 1 == last_content_idx:
-                    # Torn/incomplete TRAILING line: a crash mid-write. Recover the good
-                    # events, drop the partial final line. Losing the whole mission trace
-                    # to one interrupted append is the far worse failure.
-                    _LOG.warning(
-                        "episode %r: dropped torn trailing line %d of events.jsonl "
-                        "(crash mid-append); recovered %d event(s)",
-                        episode_id,
-                        lineno,
-                        len(events),
-                    )
-                    break
-                # An INTERIOR corrupt line is a trace-integrity failure, NOT a thing to
-                # silently skip (dropping a recorded event is fabrication-adjacent).
-                # Fail loudly and locate it, rather than emit a raw mid-iteration error.
-                raise ValueError(
-                    f"episode {episode_id!r}: corrupt event at events.jsonl line {lineno}: {exc}"
-                ) from exc
+        # Stream events.jsonl line-by-line rather than slurping the whole file into a
+        # giant string + a giant list of lines (that transient ~3x-ed peak RSS on a
+        # 100k-event mission and OOM'd CI). The events list itself still materializes
+        # here — that is the existing load_episode contract (returns a full Episode).
+        # Bounded-memory sequential access is the additive iter_events() below.
+        events = list(_stream_events(events_path, episode_id))
         events.sort(key=lambda e: e.seq)
         return Episode(episode_id=episode_id, events=tuple(events), metadata=manifest.metadata)
+
+    def iter_events(self, episode_id: str) -> Iterator[SeamEvent]:
+        """Yield an episode's events one at a time, in on-disk (append) order.
+
+        ADDITIVE (does not touch any frozen signature): for consumers that process a
+        mission sequentially, this holds at most one event in memory regardless of
+        episode length — no full list, no whole-file read. For an append-only
+        recording the on-disk order is already seq order (load_episode additionally
+        sorts because it returns the events as a tuple; sorting would require
+        materializing the full list and is therefore deliberately NOT done here).
+
+        Same crash semantics as load_episode: a torn/incomplete TRAILING line (a crash
+        mid-append) is dropped and the good events recovered; an INTERIOR corrupt line
+        raises ValueError located to its line number.
+        """
+        events_path = self._episode_dir(episode_id) / "events.jsonl"  # validates the id
+        if not events_path.exists():
+            raise EpisodeNotFound(episode_id, self._root)
+        return _stream_events(events_path, episode_id)
 
     def load_manifest(self, episode_id: str) -> EpisodeManifest:
         manifest_path = self._episode_dir(episode_id) / "manifest.json"
@@ -339,6 +332,61 @@ class TraceStore:
         # Untrusted on both paths: an episode id can arrive from a downloaded trace
         # (read) or an external producer (write). Validate before joining the root.
         return self._root / "episodes" / _safe_component(episode_id, kind="episode_id")
+
+
+# --- Streaming event reader (shared by load_episode + iter_events) ----------
+
+
+def _stream_events(events_path: Path, episode_id: str) -> Iterator[SeamEvent]:
+    """Parse events.jsonl one line at a time, yielding each SeamEvent as it is read.
+
+    Never materializes the whole file (no read_text().splitlines() transient). Preserves
+    load_episode's crash semantics exactly:
+
+      * A torn/incomplete TRAILING line (last non-empty line) is a crash mid-append:
+        drop it, recover every good event, warn. We cannot know a failing line is the
+        LAST one until EOF, so a parse failure is held pending; if any later non-empty
+        line arrives it was INTERIOR corruption (fail loudly, located to its line); if
+        EOF arrives first it was the torn trailing line (recover).
+      * Trailing blank lines after the torn line do not count as "content follows"
+        (they are skipped), matching the last-non-empty-line rule.
+    """
+    recovered = 0
+    # A parse failure whose line-position (interior vs torn-trailing) is not yet known.
+    pending: tuple[int, Exception] | None = None
+    with events_path.open("r", encoding="utf-8") as fh:
+        for lineno, raw in enumerate(fh, start=1):
+            line = raw.rstrip("\n")
+            if not line:
+                continue
+            if pending is not None:
+                # A non-empty line FOLLOWS the earlier failure: it was interior corruption,
+                # not a crash. Dropping a recorded event is fabrication-adjacent — fail
+                # loudly and locate the bad line, rather than silently skip it.
+                bad_lineno, exc = pending
+                raise ValueError(
+                    f"episode {episode_id!r}: corrupt event at events.jsonl "
+                    f"line {bad_lineno}: {exc}"
+                ) from exc
+            try:
+                event = _event_from_json(_loads(line))
+            except (ValueError, KeyError, TypeError) as exc:
+                pending = (lineno, exc)
+                continue
+            recovered += 1
+            yield event
+    if pending is not None:
+        # EOF reached with the failure still pending: it was the last non-empty line, a
+        # crash mid-write. Recover the good events, drop the partial final line. Losing a
+        # whole mission trace to one interrupted append is the far worse failure.
+        bad_lineno, _exc = pending
+        _LOG.warning(
+            "episode %r: dropped torn trailing line %d of events.jsonl "
+            "(crash mid-append); recovered %d event(s)",
+            episode_id,
+            bad_lineno,
+            recovered,
+        )
 
 
 # --- JSON (de)serialization helpers; all encoders return JSONValue ----------
