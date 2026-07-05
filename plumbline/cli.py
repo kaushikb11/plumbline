@@ -390,9 +390,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     list_parser.add_argument("--store", required=True, help="TraceStore root directory")
 
     gate_parser = subparsers.add_parser(
-        "gate", help="Run the CI regression gate over golden episodes and fail on behavioral drift"
+        "gate",
+        help="Run the CI regression gate over golden episodes and fail on behavioral drift",
+        description=(
+            "Run the CI regression gate. WARNING: the config is executed as Python "
+            "(a seam override is code, not data), so `plumbline gate <file>` runs "
+            "arbitrary code from <file> — only point it at trusted, repo-committed configs."
+        ),
     )
-    gate_parser.add_argument("config", help="Python file defining build() -> GateSpec")
+    gate_parser.add_argument(
+        "config",
+        help="Python file defining build() -> GateSpec (EXECUTED as Python — trusted configs only)",
+    )
     gate_parser.add_argument("--emit-feed", help="Write the gate feed JSON (regression dashboard)")
 
     diff_parser = subparsers.add_parser(

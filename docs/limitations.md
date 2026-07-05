@@ -85,17 +85,40 @@ before assuming a headline capability.
 - **Physical-action capture is lossy.** The Zenoh tap stores the binary CDR `Twist` via
   `utf-8`-`replace`, not a content-addressed blob; the `DECIDE_TO_ACT` comparison rests
   on the reconstructed tool call, not the bus bytes.
-- **The OM1 adapter is run-verified end-to-end, including Gazebo (WS5 DONE).**
+- **The OM1 adapter is pinned to the `v1.0.0-beta.1` wire format** (config-redirect
+  shape, Zenoh key names, tool-call JSON — see [om1-integration.md](om1-integration.md)).
+  There is **no runtime version guard**: a different OM1 build whose wire shape has drifted
+  may be mis-recorded (wrong seam reconstruction) rather than rejected. Pin your OM1 commit
+  and re-verify the adapter facts against a fresh recording when you upgrade OM1.
+- **SSE streaming is fully buffered by the proxy server** (`proxy/server.py`). A streamed
+  chat completion is captured to completion and then re-emitted, so faithful record/replay
+  is exact but **time-to-first-token is not preserved** — a robot consuming a token stream
+  sees the whole response arrive at once. This is a known v1 limitation; incremental
+  pass-through is a candidate enhancement, not a silent gap. It does not affect the
+  recorded model I/O or any decision.
+- **"Byte-identical" replay means canonical-payload identity, not raw provider wire
+  bytes.** What `tests/test_determinism.py` (invariant 2) asserts is that the normalized
+  JSON `Payload` a runtime parses and acts on round-trips bit-for-bit; a provider's
+  incidental key ordering or whitespace on the HTTP wire is not reproduced and does not
+  affect any decision. Binary content is byte-exact via content-addressed blobs. Full
+  detail: [determinism-envelope.md](determinism-envelope.md).
+- **The OM1 adapter is run-verified end-to-end, including Gazebo physics (WS5 DONE).**
   First via a SIL episode (`examples/record_om1_sil.py`: 1,542 events,
   byte-identical replay, the three `UNVERIFIED` facts pinned), then via the
-  full **Tier-3 Gazebo closed loop on Modal** (`modal/gazebo_om1.py`, episode
-  `om1-gazebo-004`): real physics (go2_sim + champ), real bridged odometry,
-  90 live-LLM decisions, 2,407 real `cmd_vel` Twist frames captured, **the
-  simulated Go2 walked 3.455 m**, faithful replay byte-identical over 2,587
-  events — and reproduced byte-identically on a different machine/arch. Bridged
-  key naming pinned (bare topic names). Two sim gaps are shimmed zero-touch and
-  documented ([om1-integration.md](om1-integration.md)). Still open: sim
-  ground-truth extraction for caption fidelity (Experiment A in sim, §14.5).
+  full **Tier-3 Gazebo closed loop on Modal** (`modal/gazebo_om1.py`), committed
+  as the CI golden `om1-gazebo-maze-003` at `bench/golden/`: real physics
+  (go2_sim + champ), real bridged odometry, 153 live-LLM Cortex decisions, 3,789
+  real `cmd_vel` Twist frames captured, **the simulated Go2 walked 8.374 m**
+  through `maze_world`, faithful replay **byte-identical over all 4,095 events**
+  — and reproduced byte-identically on a different machine/arch. Every pull
+  request gates on it (`bench/om1_gazebo_gate.py`,
+  [results](results-om1-gazebo.md)). Bridged key naming pinned (bare topic
+  names). Two sim gaps are shimmed zero-touch and documented
+  ([om1-integration.md](om1-integration.md)). This is the OM1 + Gazebo
+  *physics-simulation* integration, done and committed; a **physical-robot** run
+  (real Go2 hardware, not the simulator) is the one thing not yet exercised.
+  Still open in sim: ground-truth extraction for caption fidelity (Experiment A
+  in sim, §14.5).
 
 ## Testing without a robot
 
@@ -106,8 +129,8 @@ Tiers 1 and 2 have been **run and pass**: Tier 1 serves an OpenAI-compatible LLM
 against real temperature-0.7 models — and Experiment C replicated on the same endpoints
 with exact wide/narrow separation ([results](results-experiment-c.md)). Tier 2
 (`examples/modal_ws_validate.py`) proves byte-identical WS caption replay against a real
-remote WS server. Tier 3 (stretch, not yet run) runs OM1 + Gazebo headless for the
-run-verified episode.
+remote WS server. Tier 3 has been **run**: OM1 + Gazebo headless produced the committed
+golden `om1-gazebo-maze-003` (4,095 events, byte-identical replay — [results](results-om1-gazebo.md)).
 
 ## Net
 
@@ -116,8 +139,10 @@ usable today. The four red gaps are now addressed: the integrated **record →
 counterfactual → gate** journey flows on the recorder's own output (auto-ticked,
 four-seam episodes), the gate can score **decision divergence** anchored to the noise
 floor (catching the low-surface flips the surface path missed), and the WS caption
-stream is capturable. What remains is genuinely external or thin-glue: a **real OM1 +
-Gazebo recording** (needs Ubuntu+ROS2+Gazebo — the one thing that upgrades the OM1
-adapter from source-verified to run-verified), the ASGI websocket server wrapper +
-RTSP upload, faithful-CDR bus capture, and wiring fidelity onto replayed seams. The
-system is now demonstrable end-to-end in-process; the last mile is a real robot run.
+stream is capturable. The **real OM1 + Gazebo physics recording is done and committed**
+(`om1-gazebo-maze-003`, gating every PR), upgrading the OM1 adapter from source-verified
+to run-verified. What remains is genuinely external or thin-glue: a run on **physical Go2
+hardware** (the sim closed loop is proven; only real-robot actuation is untried), the ASGI
+websocket server wrapper + RTSP upload, faithful-CDR bus capture, and wiring fidelity onto
+replayed seams. The system is demonstrable end-to-end both in-process and in Gazebo physics;
+the last mile is a physical robot.

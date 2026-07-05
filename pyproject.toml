@@ -77,6 +77,28 @@ generic = "plumbline.adapters.generic:GenericAgentAdapter"
 [tool.hatch.build.targets.wheel]
 packages = ["plumbline"]
 
+# Keep dev-only cruft out of the published source distribution. Hatchling's sdist
+# otherwise ships everything VCS-tracked, which pulls in the agent/editor config
+# (.claude/, CLAUDE.md), local pre-commit wiring, and build/cache detritus. The
+# plumbline/ package (with py.typed) still ships via the wheel target above; the
+# sdist keeps source dirs (bench/, docs/, examples/, modal/, spec/, tests/) but
+# drops the files below.
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.claude",
+    "/CLAUDE.md",
+    "/.pre-commit-config.yaml",
+    "/.gitignore",
+    "/.gitattributes",
+    "**/__pycache__",
+    "**/*.py[cod]",
+    "**/.DS_Store",
+    "/.mypy_cache",
+    "/.ruff_cache",
+    "/.pytest_cache",
+    "/.venv",
+]
+
 # --- Ruff -------------------------------------------------------------------
 [tool.ruff]
 target-version = "py312"

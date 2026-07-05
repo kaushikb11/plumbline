@@ -16,6 +16,7 @@ The two specs in [`../spec/`](../spec/) are the source of truth for the design.
 **Scope & guarantees**
 - [limitations.md](limitations.md) — the honest scope audit: what works, what's scoped to a regime, what isn't built. Read before assuming a headline capability.
 - [determinism-envelope.md](determinism-envelope.md) — exactly what is guaranteed bit-identical (model I/O) and what is not (the wall-clock scheduler).
+- [stability.md](stability.md) — the 0.x / alpha API stability policy: what's stable (frozen `core` + flat re-exports + trace format) vs experimental (the fidelity/regression math), and the deprecation policy.
 
 **Results (real-model / real-runtime)**
 - [results-om1-gazebo.md](results-om1-gazebo.md) — the showcase episode: real OM1 + Gazebo physics, lidar-conditioned decisions, byte-identical replay.

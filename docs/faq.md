@@ -62,6 +62,32 @@ plumbline list                              # episodes on disk
 
 The gate only sees drift you express as **seam overrides** in the gate config's `build() -> GateSpec`. Point the candidate config's `overrides` at the swapped model/prompt so the counterfactual replay actually exercises it. An unchanged config gating green is correct — that's the baseline. See [api.md](api.md#plumblineregression--the-gate) and `bench/om1_gazebo_gate.py` (which also has a `build_regressed()` that gates **red**).
 
+## Which gate file do I point `plumbline gate` at? (`bench/…` vs the packaged demo)
+
+Two gate configs ship, and they live in different places:
+
+- **The real golden gate — `plumbline gate bench/om1_gazebo_gate.py`** — runs the
+  committed OM1 + Gazebo golden episode (`om1-gazebo-maze-003`, 4,095 events). Its trace
+  data lives at `bench/golden/`, which is **repo-only**: the top-level `bench/` directory
+  is *not* packaged into the wheel, so this command needs a **repo clone**, not a
+  `pip install`. This is the one CI actually gates PRs on.
+- **The packaged demo gate — `plumbline gate plumbline/bench/example_gate.py`** — ships
+  **inside the wheel** (`plumbline/bench/example_gate.py`), so it runs from a plain
+  `pip install plumbline` with no clone. Use it to see the gate mechanics end-to-end.
+
+So: after `pip install`, use `plumbline/bench/example_gate.py`; to run or extend the real
+robot golden, clone the repo and use `bench/om1_gazebo_gate.py`.
+
+## Is `plumbline gate <file>` safe to run on any config?
+
+No — treat the config as code. A gate config is a **Python file executed by the CLI**
+(`load_gate_spec` runs `exec_module` on it), because a candidate config change — a swapped
+captioner, an edited prompt — is inherently a *seam override*, i.e. code that re-runs a
+seam. Running `plumbline gate <file>` therefore executes arbitrary Python from `<file>`.
+**Only point it at trusted, repo-committed configs** (same trust level as a `conftest.py`
+or a CI script); never at an untrusted file you downloaded. The same applies to
+`--adapter module:Class` / entry-point adapter loading — standard plugin trust.
+
 ## Are recorded traces sensitive? Can I commit them?
 
 Yes, sensitive. A trace stores model requests and responses **verbatim** — system

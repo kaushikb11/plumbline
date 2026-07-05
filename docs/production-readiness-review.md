@@ -20,6 +20,22 @@ real OM1 team survive depending on this in a live robot + CI" — not a DX revie
 > Ready-with-caveats**; the remaining *majors* (streaming reads, semver policy,
 > `limitations.md` reconciliation, OTel status, SSE buffering, global embedder) are the
 > follow-up set. See the "Majors" section for what's left.
+>
+> **UPDATE 2 (2026-07): the follow-up majors/minors are now also addressed** (284
+> tests, clean wheel/sdist build verified). Major 7 — `load_episode` streams the file
+> line-by-line (no whole-file transient) and a new `TraceStore.iter_events` holds memory
+> flat regardless of episode length. Major 8 — `docs/stability.md` states the 0.x policy
+> (stable = frozen `core` + flat re-exports + trace format; experimental = the fidelity
+> math). Major 9 — `limitations.md` reconciled to the one real committed golden
+> (`om1-gazebo-maze-003`); the self-contradiction is gone. Major 10 — the pinned embedder
+> is now a `ContextVar` (per-context, no cross-contamination) with `using_embedder(...)`
+> and `active_embedder_name()`; a per-instance field remains a deliberate invariant-1
+> follow-up. Major 11 — OTLP export maps `http_status` to `http.response.status_code` +
+> an ERROR span status for ≥400. Major 13 — sdist excludes `.claude/`/`CLAUDE.md`; the
+> real gate is documented as repo-only, the packaged demo gate ships in the wheel. Minors
+> — gate-`exec` trust boundary in CLI help + FAQ, OM1 beta-pin and SSE-buffering and
+> canonical-payload-bytes all documented. SSE incremental pass-through and the final
+> package identity (name/PyPI) are the remaining deliberate deferrals.
 
 ## Verdict: NOT YET production-ready for the deployed/live use case — but the gap is narrow, well-defined, and fixable
 ## (original assessment below; blockers + security majors since resolved — see banner)
