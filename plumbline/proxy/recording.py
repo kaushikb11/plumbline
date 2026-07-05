@@ -18,7 +18,7 @@ invariant 5, §6).
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 
 from plumbline.core.interceptor import Context
@@ -35,6 +35,44 @@ _log = logging.getLogger("plumbline.proxy")
 UpstreamFn = Callable[[Payload], Payload]
 SeamClassifier = Callable[[Payload, Context], Seam]
 DigestFn = Callable[[Payload], str]
+# A redaction hook applied to request/response Payloads immediately before they are
+# handed to the Recorder (§5.1 security note): trace bodies hold prompts, tool
+# outputs, and possibly secrets/PII, so an operator may scrub them at capture time.
+# It transforms only what is STORED — the runtime always receives the upstream
+# response unaltered (zero-touch, invariant 4).
+Redactor = Callable[[Payload], Payload]
+
+_REDACTED = "[REDACTED]"
+
+
+def redact_json_keys(payload: Payload, keys: Collection[str]) -> Payload:
+    """Blank the given JSON keys (at any nesting depth) to `"[REDACTED]"` (§5.1).
+
+    A small reusable `Redactor` building block: wrap it (e.g. via `functools.partial`
+    or a lambda) to scrub known-sensitive fields — `authorization`, `api_key`, a
+    tool result carrying PII — from a request/response Payload before it is recorded.
+    Returns a NEW Payload (frozen-data safe); `blobs` are passed through untouched
+    (opaque content-addressed media is not key-addressable here)."""
+    key_set = frozenset(keys)
+
+    def walk(node: JSONValue) -> JSONValue:
+        if isinstance(node, dict):
+            return {k: (_REDACTED if k in key_set else walk(v)) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(item) for item in node]
+        return node
+
+    return Payload(inline=walk(payload.inline), blobs=payload.blobs)
+
+
+def redactor_for(keys: Collection[str]) -> "Redactor":
+    """A ready-to-use `Redactor` that blanks `keys` at any depth — pass straight to
+    `RecordingProxy(redactor=...)` / `AsyncHTTPProxy(redactor=...)`::
+
+        RecordingProxy(..., redactor=redactor_for({"api_key", "authorization"}))
+    """
+    key_set = frozenset(keys)
+    return lambda payload: redact_json_keys(payload, key_set)
 
 
 def default_digest(payload: Payload) -> str:
@@ -102,20 +140,29 @@ class RecordingProxy:
     classifier: SeamClassifier = classify_seam
     digest: DigestFn = default_digest
     episode_metadata: Mapping[str, JSONValue] = field(default_factory=dict)
+    # Optional capture-time scrubber (§5.1); None = store bodies verbatim (default,
+    # no behavior change). Applied to BOTH request and response before recording.
+    redactor: Redactor | None = None
     _opened: set[str] = field(default_factory=set, init=False, repr=False)
     _seq: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     def forward(self, request: Payload, ctx: Context) -> Payload:
-        self._ensure_open(ctx.episode_id)
         started = time.perf_counter()
         response = self.upstream(request)  # zero-touch: forward and return unaltered
         latency_ms = (time.perf_counter() - started) * 1000.0
 
-        # Zero-touch (invariant 4): a recording fault must never alter the response
-        # the runtime receives — log and drop, then return the upstream response.
+        # Zero-touch (invariant 4): ALL recording — opening the episode, redaction,
+        # and the record() call — happens inside this guard, so a store/open fault
+        # (read-only fs, full disk) or a redactor bug is logged and dropped, never
+        # allowed to turn a healthy upstream response into an exception for the
+        # runtime. _ensure_open lives here (not before the forward) for exactly this:
+        # a failed open must not throw a good response away.
         try:
+            self._ensure_open(ctx.episode_id)
             seq = self._seq[ctx.episode_id]
             self._seq[ctx.episode_id] = seq + 1
+            record_request = self.redactor(request) if self.redactor is not None else request
+            record_response = self.redactor(response) if self.redactor is not None else response
             self.recorder.record(
                 SeamEvent(
                     episode_id=ctx.episode_id,
@@ -123,11 +170,13 @@ class RecordingProxy:
                     seam=self.classifier(request, ctx),
                     logical_tick=ctx.logical_tick,  # loop-iteration index (§6)
                     wall_ts=time.time(),
-                    request=request,
-                    response=response,
+                    request=record_request,
+                    response=record_response,
                     model_id=ctx.model_id,
                     params=ctx.params,
-                    request_digest=self.digest(request),
+                    # Digest of the (possibly redacted) stored request, so it matches
+                    # what is persisted and passes the recorder's digest validation.
+                    request_digest=self.digest(record_request),
                     latency_ms=latency_ms,
                 )
             )
@@ -178,13 +227,21 @@ class ReplayingProxy:
         (§4.2). Repeated identical requests are served in record order; an extra
         occurrence beyond what was recorded is a divergence, surfaced as a ReplayMiss
         (a KeyError subclass, so the HTTP layer's 404 mapping is unchanged)."""
+        return self.faithful_event(request, ctx).response
+
+    def faithful_event(self, request: Payload, ctx: Context) -> SeamEvent:
+        """Like `faithful`, but return the whole SeamEvent for the next occurrence of
+        this request digest, not just its response. The HTTP replay path needs the
+        event to reconstruct the recorded status/framing (params carry the HTTP
+        status), while advancing the SAME per-digest cursor so repeated requests are
+        served in record order and over-consumption raises ReplayMiss."""
         digest = self.digest(request)
         events = self._by_digest.get(digest, [])
         index = self._digest_cursor.get(digest, 0)
         if index >= len(events):
             raise ReplayMiss(digest, recorded=len(events), consumed=index)
         self._digest_cursor[digest] = index + 1
-        return events[index].response
+        return events[index]
 
     def counterfactual(self, request: Payload, ctx: Context) -> Payload:
         """Match the live request to the next recorded call at its seam; serve the

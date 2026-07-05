@@ -26,9 +26,9 @@ from plumbline.core.recorder import Recorder
 from plumbline.core.replayer import DivergencePolicy
 from plumbline.core.seam import Seam
 from plumbline.core.store import TraceStore
-from plumbline.core.trace import BlobKind, JSONValue, Payload, SeamEvent
+from plumbline.core.trace import BlobKind, JSONValue, Payload, SeamEvent, canonicalize
 from plumbline.proxy.normalizers import DEFAULT_NORMALIZERS, NormalizedRequest, Normalizer
-from plumbline.proxy.recording import ProxyDivergence
+from plumbline.proxy.recording import ProxyDivergence, Redactor, ReplayingProxy
 from plumbline.proxy.streaming import (
     CapturedStream,
     assemble_openai,
@@ -78,6 +78,7 @@ class AsyncHTTPProxy:
         normalizers: tuple[Normalizer, ...] = DEFAULT_NORMALIZERS,
         episode_metadata: Mapping[str, JSONValue] | None = None,
         tick_policy: TickPolicy | None = None,
+        redactor: Redactor | None = None,
     ) -> None:
         self._transport = transport
         self._recorder = recorder
@@ -87,21 +88,31 @@ class AsyncHTTPProxy:
         self._opened: set[str] = set()
         self._seq: dict[str, int] = {}
         self._tick_policy = tick_policy
+        self._redactor = redactor
+        # Faithful replay delegates to a per-episode ReplayingProxy, built ONCE and
+        # cached (its __post_init__ indexes the episode by request_digest with a
+        # per-digest cursor). This replaces the old per-request store.load_episode()
+        # scan, which reparsed the whole trace on every call (O(n^2)) and — worse —
+        # returned the FIRST event for a repeated request every time (a false-green:
+        # distinct sampled responses collapsed to one). See §4.2.
+        self._replayers: dict[str, ReplayingProxy] = {}
 
     async def record(self, request: HTTPRequest, ctx: Context) -> HTTPResponse:
-        self._ensure_open(ctx.episode_id)
-        normalizer = self._select(request.url)
-        normalized_request = normalizer.normalize_request(_decode_json(request.body))
-
         started = time.perf_counter()
         response = await self._transport.send(request)  # zero-touch forward
         latency_ms = (time.perf_counter() - started) * 1000.0
 
         # ZERO-TOUCH (CLAUDE.md invariant 4): the runtime must receive the upstream
         # response it earned even if RECORDING fails (disk full, blob write error, a
-        # malformed body). A recording-layer fault is logged and dropped, never
-        # allowed to turn a good 200 into a 500 to the runtime.
+        # read-only episode open, a malformed body). EVERY recording step —
+        # opening the episode, normalizing, and _capture — lives inside this guard so
+        # a fault is logged and dropped, never allowed to turn a good 200 into a 500
+        # for the runtime. _ensure_open is here (not before the forward) so a failed
+        # episode-open does not throw away an already-earned upstream response.
         try:
+            self._ensure_open(ctx.episode_id)
+            normalizer = self._select(request.url)
+            normalized_request = normalizer.normalize_request(_decode_json(request.body))
             self._capture(request, response, normalizer, normalized_request, ctx, latency_ms)
         except Exception:  # noqa: BLE001 - recording must never break the forward path
             _log.exception("plumbline: recording failed for %s (response forwarded)", request.url)
@@ -147,6 +158,18 @@ class AsyncHTTPProxy:
         params.update(normalized_request.params)
         params[_HTTP_STATUS_KEY] = response.status
 
+        # Redaction (§5.1) runs INSIDE the zero-touch guard (_capture is called from
+        # the guarded block in record()), so a redactor bug cannot break forwarding.
+        # It rewrites only what is STORED; the runtime already holds the untouched
+        # upstream response. The digest is recomputed from the redacted request so it
+        # still equals canonicalize(stored request).digest (the recorder validates).
+        request_payload = normalized_request.payload
+        request_digest = normalized_request.digest_key
+        if self._redactor is not None:
+            request_payload = self._redactor(request_payload)
+            response_payload = self._redactor(response_payload)
+            request_digest = canonicalize(request_payload).digest
+
         seq = self._seq[ctx.episode_id]
         self._seq[ctx.episode_id] = seq + 1
         self._recorder.record(
@@ -156,11 +179,11 @@ class AsyncHTTPProxy:
                 seam=normalized_request.seam,
                 logical_tick=logical_tick,  # from the tick policy / header override (§6)
                 wall_ts=time.time(),
-                request=normalized_request.payload,
+                request=request_payload,
                 response=response_payload,
                 model_id=normalized_request.model_id or ctx.model_id,
                 params=params,
-                request_digest=normalized_request.digest_key,
+                request_digest=request_digest,
                 latency_ms=latency_ms,
             )
         )
@@ -181,19 +204,25 @@ class AsyncHTTPProxy:
         """
         normalizer = self._select(request.url)
         normalized = normalizer.normalize_request(_decode_json(request.body))
-        episode = self._store.load_episode(ctx.episode_id)
 
         if mode is None:
-            for event in episode.events:
-                if event.request_digest == normalized.digest_key:
-                    return _response_from_payload(event.response, _status_of(event))
-            raise KeyError(f"no recorded response for request {normalized.digest_key}")
+            # Delegate to the tested ReplayingProxy (built once, cached): it advances
+            # a per-digest cursor, so a REPEATED request is served in record order
+            # (not first-wins), an over-consumed request raises ReplayMiss (a KeyError
+            # subclass -> the server's existing 404), and there is no per-request
+            # reparse of the trace. normalized.payload canonicalizes to
+            # normalized.digest_key, which is exactly the stored request_digest, so
+            # the delegate's default_digest keying matches. See §4.2.
+            replayer = self._replayer_for(ctx.episode_id)
+            event = replayer.faithful_event(normalized.payload, ctx)
+            return _response_from_payload(event.response, _status_of(event))
 
         # NOTE (bounded): this counterfactual path matches against the FIRST recorded
         # event at the seam — it has no positional cursor, so for a seam that recurs
         # across ticks use `Replayer.counterfactual` / `ReplayingProxy` (which advance
         # a per-seam cursor and can go live). The deployed replay server uses only the
         # faithful path above; this branch is for in-process/counterfactual callers.
+        episode = self._store.load_episode(ctx.episode_id)
         matchers = matchers or {}
         for event in episode.events:
             if event.seam is not normalized.seam:
@@ -218,6 +247,16 @@ class AsyncHTTPProxy:
             self._recorder.open_episode(episode_id, self._episode_metadata)
             self._opened.add(episode_id)
             self._seq[episode_id] = 0
+
+    def _replayer_for(self, episode_id: str) -> ReplayingProxy:
+        """The per-episode faithful replayer, built once and cached. Its __post_init__
+        indexes the episode by request_digest (a single reparse), so serving is O(1)
+        per request with a per-digest cursor for record-order repeats (§4.2)."""
+        replayer = self._replayers.get(episode_id)
+        if replayer is None:
+            replayer = ReplayingProxy(store=self._store, episode_id=episode_id)
+            self._replayers[episode_id] = replayer
+        return replayer
 
     def _select(self, url: str) -> Normalizer:
         for normalizer in self._normalizers:
